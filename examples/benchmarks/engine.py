@@ -106,6 +106,7 @@ class BenchmarkEngine:
             eval_size=200,
             max_length=args.max_length,
             num_proc=args.num_workers,
+            dataset=getattr(args, "dataset", "tinystories"),
         )
 
         self.base_model = None

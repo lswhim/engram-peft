@@ -61,6 +61,13 @@ def main() -> None:
         help="HF model id for the base model.",
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default="tinystories",
+        choices=["tinystories", "biomed"],
+        help="Training/eval corpus.",
+    )
+    parser.add_argument(
         "--methods",
         nargs="+",
         default=["lora", "engram"],
