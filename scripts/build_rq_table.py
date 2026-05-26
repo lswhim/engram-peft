@@ -37,6 +37,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--text_column", default="text")
     p.add_argument("--num_docs", type=int, default=20000)
     p.add_argument("--max_doc_tokens", type=int, default=512)
+    # optional corpus filters (e.g. Biomed-Enriched: en + biomedical + edu>4.0)
+    p.add_argument("--filter_language", default=None)
+    p.add_argument("--filter_domain", default=None)
+    p.add_argument("--min_edu_score", type=float, default=None)
     p.add_argument("--base_tokenizer", default="Qwen/Qwen3-1.7B")
     p.add_argument("--embedder", default="Qwen/Qwen3-Embedding-0.6B")
     p.add_argument("--ngram_sizes", type=int, nargs="+", default=[2, 3])
@@ -72,12 +76,19 @@ def poly_key(comp_ids, base: int) -> int:
 def scan_ngrams(args, comp, tok):
     from datasets import load_dataset
 
-    ds = load_dataset(args.dataset, args.dataset_config, split=args.split, streaming=True)
+    cfg = args.dataset_config if args.dataset_config not in (None, "", "none") else None
+    ds = load_dataset(args.dataset, cfg, split=args.split, streaming=True)
     base = comp.compressed_vocab_size + 1
     counters = {n: Counter() for n in args.ngram_sizes}
     repr_tokens = {n: {} for n in args.ngram_sizes}
     seen = 0
     for ex in ds:
+        if args.filter_language and ex.get("language") != args.filter_language:
+            continue
+        if args.filter_domain and ex.get("domain") != args.filter_domain:
+            continue
+        if args.min_edu_score is not None and (ex.get("educational_score") or 0) < args.min_edu_score:
+            continue
         text = ex.get(args.text_column)
         if not text:
             continue
