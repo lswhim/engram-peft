@@ -55,6 +55,12 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument(
+        "--model_name",
+        type=str,
+        default="Qwen/Qwen3-1.7B",
+        help="HF model id for the base model.",
+    )
+    parser.add_argument(
         "--methods",
         nargs="+",
         default=["lora", "engram"],
@@ -133,8 +139,7 @@ def main() -> None:
         return
 
     # Normal Run Mode
-    # Use deterministic model name for now
-    model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
+    model_name = args.model_name
     engine = BenchmarkEngine(model_name, args)
 
     engine.run_all(args.methods)
