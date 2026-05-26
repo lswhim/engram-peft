@@ -227,10 +227,14 @@ def get_trainable_param_groups(
     engram_sparse_params: list[torch.nn.Parameter] = []
     engram_dense_params: list[torch.nn.Parameter] = []
 
+    use_sparse = getattr(model.config, "use_sparse_embeddings", True)
     for name, param in model.engram_layers.named_parameters():
         if not param.requires_grad:
             continue
-        if "multi_head_embedding.embedding.weight" in name:
+        # Only route the embedding table to SparseAdam when it is *actually* sparse.
+        # With use_sparse_embeddings=False the weight is dense and must use Adam,
+        # otherwise SparseAdam rejects the dense gradient.
+        if "multi_head_embedding.embedding.weight" in name and use_sparse:
             engram_sparse_params.append(param)
         else:
             engram_dense_params.append(param)
