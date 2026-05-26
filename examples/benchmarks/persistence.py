@@ -1,8 +1,14 @@
 # pyright: reportUnknownMemberType=none, reportUnknownVariableType=none, reportUnknownArgumentType=none, reportUnknownParameterType=none
 import json
 import os
+import re
 from datetime import datetime
 from typing import Any
+
+
+def _safe_name(method: str) -> str:
+    """Sanitize a method spec (may contain ':', '/', ',') for use in a filename."""
+    return re.sub(r"[^A-Za-z0-9._=-]+", "_", method)[:120]
 
 
 class BenchmarkResult:
@@ -45,7 +51,7 @@ class BenchmarkResult:
     def save(self, base_dir: str = "outputs/benchmarks") -> str:
         """Convenience method to save the result."""
         os.makedirs(base_dir, exist_ok=True)
-        filename = f"{self.method}_{self.timestamp}.json"
+        filename = f"{_safe_name(self.method)}_{self.timestamp}.json"
         path = os.path.join(base_dir, filename)
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
@@ -60,7 +66,7 @@ class ResultManager:
         os.makedirs(self.base_dir, exist_ok=True)
 
     def save(self, result: BenchmarkResult) -> str:
-        filename = f"{result.method}_{result.timestamp}.json"
+        filename = f"{_safe_name(result.method)}_{result.timestamp}.json"
         path = os.path.join(self.base_dir, filename)
         with open(path, "w") as f:
             json.dump(result.to_dict(), f, indent=2)
