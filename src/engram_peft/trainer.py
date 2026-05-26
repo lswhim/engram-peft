@@ -172,7 +172,7 @@ class EngramTrainer(Trainer):
                     + "DDP converts sparse gradients to dense during all_reduce, "
                     + "making SparseAdam unusable. A standard AdamW optimizer is used instead."
                 )
-                self.optimizer = super().create_optimizer(model)
+                self.optimizer = super().create_optimizer()
             else:
                 model = wash_model(self.model)
                 if isinstance(model, EngramModel) and hasattr(
@@ -185,7 +185,7 @@ class EngramTrainer(Trainer):
                 else:
                     # Non-Engram models (e.g. plain HF models or LoRA baselines) should
                     # use the standard Transformers optimizer creation path.
-                    self.optimizer = super().create_optimizer(model)
+                    self.optimizer = super().create_optimizer()
         assert self.optimizer is not None
         return self.optimizer
 
