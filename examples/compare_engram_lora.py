@@ -67,6 +67,7 @@ def main() -> None:
         choices=["tinystories", "biomed"],
         help="Training/eval corpus.",
     )
+    parser.add_argument("--seed", type=int, default=42, help="Global seed.")
     parser.add_argument(
         "--methods",
         nargs="+",
@@ -116,7 +117,7 @@ def main() -> None:
             "full_finetune_engram",
         ]
 
-    set_seed(42)
+    set_seed(args.seed)
     manager = ResultManager()
 
     if args.list:

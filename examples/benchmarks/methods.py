@@ -217,9 +217,11 @@ def train_engram(
     train_result = trainer.train()
     metrics = extract_trainer_metrics(trainer, train_result)
 
-    # Per-config save dir so a matrix (arithmetic vs rq, head counts) does not collide.
+    # Per-config save dir so a matrix (base x backend x seed) does not collide.
     backend = getattr(config, "hash_backend", "arithmetic")
-    save_dir = f"outputs/benchmarks/ckpt_{backend}_h{config.n_head_per_ngram}"
+    model_short = str(getattr(args, "model_name", "model")).split("/")[-1]
+    seed = getattr(args, "seed", 42)
+    save_dir = f"outputs/benchmarks/ckpt_{model_short}_{backend}_h{config.n_head_per_ngram}_seed{seed}"
     model.save_pretrained(save_dir)
     print(f"[engram] saved checkpoint to {save_dir}")
     metrics["save_dir"] = save_dir
