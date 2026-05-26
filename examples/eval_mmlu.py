@@ -41,7 +41,7 @@ def main() -> None:
     if args.engram_weights:
         from engram_peft import EngramModel
 
-        model = EngramModel.from_pretrained(base, args.engram_weights)
+        model = EngramModel.from_pretrained(base, args.engram_weights, tokenizer=tok)
         model.eval()
         tag = f"engram:{args.engram_weights}"
         print(f"[eval_mmlu] loaded Engram checkpoint from {args.engram_weights}")
