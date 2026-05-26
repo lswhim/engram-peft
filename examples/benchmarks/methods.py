@@ -217,7 +217,12 @@ def train_engram(
     train_result = trainer.train()
     metrics = extract_trainer_metrics(trainer, train_result)
 
-    model.save_pretrained("outputs/benchmarks/engram_weights")
+    # Per-config save dir so a matrix (arithmetic vs rq, head counts) does not collide.
+    backend = getattr(config, "hash_backend", "arithmetic")
+    save_dir = f"outputs/benchmarks/ckpt_{backend}_h{config.n_head_per_ngram}"
+    model.save_pretrained(save_dir)
+    print(f"[engram] saved checkpoint to {save_dir}")
+    metrics["save_dir"] = save_dir
     model.unload_engram()
     return metrics
 
