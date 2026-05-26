@@ -17,6 +17,7 @@ from engram_peft.config import EngramConfig
 from engram_peft.discovery import ArchitectureResolver
 from engram_peft.hashing import NgramHashMapping
 from engram_peft.layer import EngramLayer
+from engram_peft.rq_hashing import RQNgramMapping
 from engram_peft.types import (
     EngramModelProtocol,
     ModelProtocol,
@@ -66,7 +67,7 @@ class EngramModel(nn.Module, GenerationMixin):
     train_mode: TrainMode
     config: EngramConfig
     compressor: CompressedTokenizer | None
-    hash_mapping: NgramHashMapping
+    hash_mapping: NgramHashMapping | RQNgramMapping
     active_adapter: str
     peft_config: dict[str, EngramConfig]
     adapters: nn.ModuleDict
@@ -126,15 +127,24 @@ class EngramModel(nn.Module, GenerationMixin):
         )
         assert mapped_pad_id is not None, "pad_id must be set"
 
-        self.hash_mapping = NgramHashMapping(
-            engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
-            ngram_sizes=config.ngram_sizes,
-            n_head_per_ngram=config.n_head_per_ngram,
-            layer_ids=config.target_layers,
-            compressed_vocab_size=config.compressed_vocab_size,
-            pad_id=mapped_pad_id,
-            seed=config.seed,
-        )
+        if config.hash_backend == "rq":
+            assert config.rq_table_dir is not None, (
+                "rq_table_dir must be set when hash_backend='rq'"
+            )
+            self.hash_mapping = RQNgramMapping(
+                table_dir=config.rq_table_dir,
+                pad_id=mapped_pad_id,
+            )
+        else:
+            self.hash_mapping = NgramHashMapping(
+                engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
+                ngram_sizes=config.ngram_sizes,
+                n_head_per_ngram=config.n_head_per_ngram,
+                layer_ids=config.target_layers,
+                compressed_vocab_size=config.compressed_vocab_size,
+                pad_id=mapped_pad_id,
+                seed=config.seed,
+            )
 
         # 3. Named adapter management & Initialization
         self.active_adapter = "default"
@@ -146,10 +156,7 @@ class EngramModel(nn.Module, GenerationMixin):
         # Initialize Engram layers for the default adapter
         default_layers = nn.ModuleDict()
         for layer_id in config.target_layers:
-            prime_list = self.hash_mapping.prime_tables[layer_id]
-            flat_primes: list[int] = [
-                p for head_primes in prime_list for p in head_primes
-            ]
+            flat_primes: list[int] = self._flat_primes_for_layer(layer_id)
             default_layers[str(layer_id)] = EngramLayer(
                 config=config,
                 layer_id=layer_id,
@@ -174,6 +181,13 @@ class EngramModel(nn.Module, GenerationMixin):
             self.adapters.to(target_dtype)
         else:
             self.adapters.float()
+
+    def _flat_primes_for_layer(self, layer_id: int) -> list[int]:
+        """Per-head embedding table sizes for a layer (arithmetic primes or RQ [K]*heads)."""
+        if isinstance(self.hash_mapping, RQNgramMapping):
+            return self.hash_mapping.primes
+        prime_list = self.hash_mapping.prime_tables[layer_id]
+        return [p for head_primes in prime_list for p in head_primes]
 
     def add_model_tags(self, tags: list[str]) -> None:
         """
@@ -338,8 +352,7 @@ class EngramModel(nn.Module, GenerationMixin):
             # For simplicity, we create new layers.
             # We might need a separate hash_mapping per adapter if configs differ.
             # But hashing is usually tied to the backbone/tokenizer.
-            prime_list = self.hash_mapping.prime_tables[layer_id]
-            flat_primes = [p for head_primes in prime_list for p in head_primes]
+            flat_primes = self._flat_primes_for_layer(layer_id)
             new_layers[str(layer_id)] = EngramLayer(
                 config=config,
                 layer_id=layer_id,

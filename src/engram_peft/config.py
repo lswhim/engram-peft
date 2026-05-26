@@ -134,6 +134,17 @@ class EngramConfig(PreTrainedConfig):
         default=0,
         metadata={"help": "Random seed for deterministic hashing primes."},
     )
+    hash_backend: str = field(
+        default="arithmetic",
+        metadata={
+            "help": "Address backend: 'arithmetic' (original XOR-multiply hash) or "
+            + "'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py)."
+        },
+    )
+    rq_table_dir: str | None = field(
+        default=None,
+        metadata={"help": "Path to the prebuilt RQ table dir (required if hash_backend='rq')."},
+    )
     clip_grad_per_group: bool = field(
         default=False,
         metadata={
