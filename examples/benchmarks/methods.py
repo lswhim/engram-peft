@@ -9,6 +9,7 @@ from peft import LoraConfig, TaskType, get_peft_model
 from torch.optim.adamw import AdamW
 from transformers import (
     DataCollatorForLanguageModeling,
+    EarlyStoppingCallback,
     PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
@@ -185,8 +186,13 @@ def train_engram(
         "min_lr_ratio": 1e-6 / 3e-4,
     }
 
+    backend = getattr(config, "hash_backend", "arithmetic")
+    model_short = str(getattr(args, "model_name", "model")).split("/")[-1]
+    seed = getattr(args, "seed", 42)
+    run_tag = f"{model_short}_{backend}_h{config.n_head_per_ngram}_seed{seed}"
+
     training_args = TrainingArguments(
-        output_dir="outputs/benchmarks/tmp/engram",
+        output_dir=f"outputs/benchmarks/tmp/{run_tag}",
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         max_steps=args.max_steps,
@@ -199,7 +205,12 @@ def train_engram(
         eval_steps=100,
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
-        save_strategy="no",
+        save_strategy="steps",
+        save_steps=100,
+        save_total_limit=1,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         seed=args.seed,
         data_seed=args.seed,
     )
@@ -216,16 +227,15 @@ def train_engram(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=collator,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
     )
 
     train_result = trainer.train()
     metrics = extract_trainer_metrics(trainer, train_result)
 
+    # load_best_model_at_end has restored the best-eval_loss weights into `model`.
     # Per-config save dir so a matrix (base x backend x seed) does not collide.
-    backend = getattr(config, "hash_backend", "arithmetic")
-    model_short = str(getattr(args, "model_name", "model")).split("/")[-1]
-    seed = getattr(args, "seed", 42)
-    save_dir = f"outputs/benchmarks/ckpt_{model_short}_{backend}_h{config.n_head_per_ngram}_seed{seed}"
+    save_dir = f"outputs/benchmarks/ckpt_{run_tag}"
     model.save_pretrained(save_dir)
     print(f"[engram] saved checkpoint to {save_dir}")
     metrics["save_dir"] = save_dir
