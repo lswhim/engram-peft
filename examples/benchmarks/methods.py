@@ -194,6 +194,7 @@ def train_engram(
         _rqd = getattr(config, "rq_table_dir", "") or ""
         if _rqd:
             run_tag += "_" + os.path.basename(_rqd.rstrip("/"))
+    run_tag += getattr(args, "run_suffix", "") or ""
 
     training_args = TrainingArguments(
         output_dir=f"outputs/benchmarks/tmp/{run_tag}",

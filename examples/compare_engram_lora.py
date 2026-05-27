@@ -48,6 +48,8 @@ from examples.benchmarks.plotting import plot_benchmark_comparison
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Engram Benchmarking Suite")
+    parser.add_argument("--run_suffix", type=str, default="",
+                        help="Optional suffix appended to the ckpt/run tag (e.g. for target_layers ablations).")
     parser.add_argument("--max_steps", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--subset", type=int, default=1000)
