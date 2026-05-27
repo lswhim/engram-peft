@@ -50,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_ngrams_per_size", type=int, default=500000)
     p.add_argument("--min_count", type=int, default=2)
     p.add_argument("--embed_batch_size", type=int, default=256)
+    p.add_argument("--rq_train_threads", type=int, default=32,
+                   help="faiss OMP threads for RQ training (CPU-bound step)")
     p.add_argument("--output_dir", default="rq_tables/fineweb_qwen3")
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
@@ -164,6 +166,8 @@ def unpack_codes(packed: np.ndarray, M: int, nbits: int) -> np.ndarray:
 def train_rq(args, emb):
     import faiss
 
+    faiss.omp_set_num_threads(args.rq_train_threads)
+    print(f"[rq] faiss omp threads = {faiss.omp_get_max_threads()}")
     d = emb.shape[1]
     nbits = int(np.log2(args.codebook_size))
     assert (1 << nbits) == args.codebook_size, "codebook_size must be power of 2"
