@@ -198,6 +198,7 @@ def train_engram(
     training_args = TrainingArguments(
         output_dir=f"outputs/benchmarks/tmp/{run_tag}",
         per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         max_steps=args.max_steps,
         learning_rate=3e-4,
