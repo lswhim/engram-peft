@@ -190,6 +190,10 @@ def train_engram(
     model_short = str(getattr(args, "model_name", "model")).split("/")[-1]
     seed = getattr(args, "seed", 42)
     run_tag = f"{model_short}_{backend}_h{config.n_head_per_ngram}_seed{seed}"
+    if backend == "rq":
+        _rqd = getattr(config, "rq_table_dir", "") or ""
+        if _rqd:
+            run_tag += "_" + os.path.basename(_rqd.rstrip("/"))
 
     training_args = TrainingArguments(
         output_dir=f"outputs/benchmarks/tmp/{run_tag}",
