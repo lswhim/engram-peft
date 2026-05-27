@@ -211,7 +211,7 @@ def train_engram(
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         save_strategy="steps",
         save_steps=100,
-        save_total_limit=1,
+        save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
