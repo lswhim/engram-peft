@@ -113,6 +113,8 @@ def train_lora(
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         save_strategy="no",
+        seed=args.seed,
+        data_seed=args.seed,
     )
 
     # Apply overrides
@@ -198,6 +200,8 @@ def train_engram(
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         save_strategy="no",
+        seed=args.seed,
+        data_seed=args.seed,
     )
 
     # Apply overrides to training_args
@@ -268,6 +272,8 @@ def train_full_finetune(
         eval_strategy="steps",
         eval_steps=100,
         save_strategy="no",
+        seed=args.seed,
+        data_seed=args.seed,
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
     )
@@ -374,6 +380,8 @@ def train_lora_engram(
         eval_strategy="steps",
         eval_steps=100,
         save_strategy="no",
+        seed=args.seed,
+        data_seed=args.seed,
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
     )
@@ -468,6 +476,8 @@ def train_full_finetune_engram(
         eval_strategy="steps",
         eval_steps=100,
         save_strategy="no",
+        seed=args.seed,
+        data_seed=args.seed,
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
     )

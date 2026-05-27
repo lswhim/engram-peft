@@ -15,10 +15,14 @@ def _load_tinystories(subset_size: int, eval_size: int) -> tuple[Any, Any]:
     return train_ds, val_ds
 
 
-def _load_biomed(subset_size: int, eval_size: int) -> tuple[Any, Any]:
+def _load_biomed(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
     """Biomed-Enriched (TinyEngram protocol): en + biomedical; train edu>4.0, eval edu<4.0."""
-    print(f"Loading Biomed-Enriched (streaming, train subset={subset_size})...")
+    print(f"Loading Biomed-Enriched (streaming, train subset={subset_size}, seed={seed})...")
     raw = load_dataset("almanach/Biomed-Enriched", split="commercial", streaming=True)
+    # Shuffle the stream so different seeds draw different train subsets.
+    # Without this we always took the fixed first-N rows -> seed was a no-op
+    # (every seed trained on identical data, see SKILL.md §11.1).
+    raw = raw.shuffle(seed=seed, buffer_size=max(subset_size + eval_size, 20000))
     train_rows: list[dict[str, str]] = []
     eval_rows: list[dict[str, str]] = []
     for ex in raw:
@@ -45,10 +49,11 @@ def prepare_dataset(
     max_length: int,
     num_proc: int = 4,
     dataset: str = "tinystories",
+    seed: int = 42,
 ) -> tuple[Any, Any]:
     """Standardized dataset preparation. dataset in {tinystories, biomed}."""
     if dataset == "biomed":
-        train_ds, val_ds = _load_biomed(subset_size, eval_size)
+        train_ds, val_ds = _load_biomed(subset_size, eval_size, seed=seed)
     else:
         train_ds, val_ds = _load_tinystories(subset_size, eval_size)
 
