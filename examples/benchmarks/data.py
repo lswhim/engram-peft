@@ -50,8 +50,11 @@ def _load_jsonl_corpus(path: str, subset_size: int, eval_size: int, seed: int = 
     rng = list(range(len(rows)))
     import random
     random.Random(seed).shuffle(rng)
-    train_rows = [rows[i] for i in rng[:subset_size]]
-    eval_rows = [rows[i] for i in rng[subset_size : subset_size + eval_size]]
+    # Carve eval FIRST so it's never empty; train takes the rest (capped at subset_size).
+    eval_n = min(eval_size, len(rows))
+    eval_rows = [rows[i] for i in rng[:eval_n]]
+    train_n = min(subset_size, len(rows) - eval_n)
+    train_rows = [rows[i] for i in rng[eval_n : eval_n + train_n]]
     print(f"[jsonl] {path}: total {len(rows)} -> {len(train_rows)} train / {len(eval_rows)} eval.")
     return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
 
