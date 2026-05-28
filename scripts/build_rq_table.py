@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--embed_batch_size", type=int, default=256)
     p.add_argument("--rq_train_threads", type=int, default=32,
                    help="faiss OMP threads for RQ training (CPU-bound step)")
+    p.add_argument("--data_files", type=str, default=None,
+                   help="If set, load corpus from local JSONL via load_dataset('json', data_files=...). Overrides --dataset/--dataset_config.")
     p.add_argument("--output_dir", default="rq_tables/fineweb_qwen3")
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
@@ -79,7 +81,10 @@ def scan_ngrams(args, comp, tok):
     from datasets import load_dataset
 
     cfg = args.dataset_config if args.dataset_config not in (None, "", "none") else None
-    ds = load_dataset(args.dataset, cfg, split=args.split, streaming=True)
+    if args.data_files:
+        ds = load_dataset("json", data_files=args.data_files, split=args.split, streaming=True)
+    else:
+        ds = load_dataset(args.dataset, cfg, split=args.split, streaming=True)
     base = comp.compressed_vocab_size + 1
     counters = {n: Counter() for n in args.ngram_sizes}
     repr_tokens = {n: {} for n in args.ngram_sizes}

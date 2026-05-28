@@ -42,6 +42,35 @@ def _load_biomed(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any,
     return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
 
 
+def _load_counterfact(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
+    """COUNTERFACT (Meng+22): each train case expanded into ~6 fact sentences
+    (prompt-template fill + paraphrases + generation prompts), all paired with
+    target_new so engram memorizes the counterfactual answer. subset_size = #cases."""
+    print(f"Loading COUNTERFACT (cases subset={subset_size}, seed={seed})...")
+    train = load_dataset("azhx/counterfact", split="train").shuffle(seed=seed)
+    test = load_dataset("azhx/counterfact", split="test")
+
+    def expand(ex: dict[str, Any]) -> list[str]:
+        rr = ex["requested_rewrite"]
+        prompt = rr["prompt"].format(rr["subject"])
+        new = rr["target_new"]["str"]
+        sents = [f"{prompt} {new}."]
+        sents += [f"{p} {new}." for p in ex["paraphrase_prompts"]]
+        sents += [f"{g} {new}." for g in ex["generation_prompts"][:3]]
+        return sents
+
+    train_rows: list[dict[str, str]] = []
+    for ex in train.select(range(min(subset_size, len(train)))):
+        for s in expand(ex):
+            train_rows.append({"text": s})
+    eval_rows: list[dict[str, str]] = []
+    for ex in test.select(range(min(eval_size, len(test)))):
+        rr = ex["requested_rewrite"]
+        eval_rows.append({"text": f"{rr['prompt'].format(rr['subject'])} {rr['target_new']['str']}."})
+    print(f"COUNTERFACT: {len(train_rows)} train sentences / {len(eval_rows)} eval sentences.")
+    return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
+
+
 def prepare_dataset(
     tokenizer: PreTrainedTokenizerBase,
     subset_size: int,
@@ -51,9 +80,11 @@ def prepare_dataset(
     dataset: str = "tinystories",
     seed: int = 42,
 ) -> tuple[Any, Any]:
-    """Standardized dataset preparation. dataset in {tinystories, biomed}."""
+    """Standardized dataset preparation. dataset in {tinystories, biomed, counterfact}."""
     if dataset == "biomed":
         train_ds, val_ds = _load_biomed(subset_size, eval_size, seed=seed)
+    elif dataset == "counterfact":
+        train_ds, val_ds = _load_counterfact(subset_size, eval_size, seed=seed)
     else:
         train_ds, val_ds = _load_tinystories(subset_size, eval_size)
 
