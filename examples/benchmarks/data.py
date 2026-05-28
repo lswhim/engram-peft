@@ -109,7 +109,9 @@ def prepare_dataset(
     if dataset == "biomed":
         train_ds, val_ds = _load_biomed(subset_size, eval_size, seed=seed)
     elif dataset == "counterfact":
-        train_ds, val_ds = _load_counterfact(subset_size, eval_size, seed=seed)
+        # Use the pre-built JSONL (data/counterfact/corpus_train.jsonl: 118k sentences from 19728 cases).
+        # subset_size here is in SENTENCES (not cases); set big to use full corpus.
+        train_ds, val_ds = _load_jsonl_corpus("data/counterfact/corpus_train.jsonl", subset_size, eval_size, seed=seed)
     elif dataset == "zsre":
         train_ds, val_ds = _load_zsre(subset_size, eval_size, seed=seed)
     elif dataset == "mquake":
