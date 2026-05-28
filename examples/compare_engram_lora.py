@@ -66,7 +66,7 @@ def main() -> None:
         "--dataset",
         type=str,
         default="tinystories",
-        choices=["tinystories", "biomed"],
+        choices=["tinystories", "biomed", "counterfact"],
         help="Training/eval corpus.",
     )
     parser.add_argument("--seed", type=int, default=42, help="Global seed.")
