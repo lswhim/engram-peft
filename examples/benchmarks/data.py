@@ -42,6 +42,28 @@ def _load_biomed(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any,
     return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
 
 
+def _load_jsonl_corpus(path: str, subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
+    """Load a pre-generated JSONL corpus (one {'text': ...} per line) + carve eval split.
+    Used by zsRE / MQuAKE which we preprocess offline."""
+    import json
+    rows = [json.loads(l) for l in open(path) if l.strip()]
+    rng = list(range(len(rows)))
+    import random
+    random.Random(seed).shuffle(rng)
+    train_rows = [rows[i] for i in rng[:subset_size]]
+    eval_rows = [rows[i] for i in rng[subset_size : subset_size + eval_size]]
+    print(f"[jsonl] {path}: total {len(rows)} -> {len(train_rows)} train / {len(eval_rows)} eval.")
+    return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
+
+
+def _load_zsre(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
+    return _load_jsonl_corpus("data/zsre/corpus_train.jsonl", subset_size, eval_size, seed)
+
+
+def _load_mquake(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
+    return _load_jsonl_corpus("data/mquake/corpus_train.jsonl", subset_size, eval_size, seed)
+
+
 def _load_counterfact(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
     """COUNTERFACT (Meng+22): each train case expanded into ~6 fact sentences
     (prompt-template fill + paraphrases + generation prompts), all paired with
@@ -80,11 +102,15 @@ def prepare_dataset(
     dataset: str = "tinystories",
     seed: int = 42,
 ) -> tuple[Any, Any]:
-    """Standardized dataset preparation. dataset in {tinystories, biomed, counterfact}."""
+    """Standardized dataset preparation. dataset in {tinystories, biomed, counterfact, zsre, mquake}."""
     if dataset == "biomed":
         train_ds, val_ds = _load_biomed(subset_size, eval_size, seed=seed)
     elif dataset == "counterfact":
         train_ds, val_ds = _load_counterfact(subset_size, eval_size, seed=seed)
+    elif dataset == "zsre":
+        train_ds, val_ds = _load_zsre(subset_size, eval_size, seed=seed)
+    elif dataset == "mquake":
+        train_ds, val_ds = _load_mquake(subset_size, eval_size, seed=seed)
     else:
         train_ds, val_ds = _load_tinystories(subset_size, eval_size)
 
