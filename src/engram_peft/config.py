@@ -137,13 +137,22 @@ class EngramConfig(PreTrainedConfig):
     hash_backend: str = field(
         default="arithmetic",
         metadata={
-            "help": "Address backend: 'arithmetic' (original XOR-multiply hash) or "
-            + "'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py)."
+            "help": "Address backend: 'arithmetic' (original XOR-multiply hash), "
+            + "'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py), "
+            + "or 'mixed' (per-head split: n_rq_levels_used RQ + n_arith_heads_per_ngram arith)."
         },
     )
     rq_table_dir: str | None = field(
         default=None,
-        metadata={"help": "Path to the prebuilt RQ table dir (required if hash_backend='rq')."},
+        metadata={"help": "Path to the prebuilt RQ table dir (required if hash_backend in {'rq','mixed'})."},
+    )
+    n_rq_levels_used: int = field(
+        default=4,
+        metadata={"help": "Mixed-hash: how many of the RQ table's M levels to use per n-gram size."},
+    )
+    n_arith_heads_per_ngram: int = field(
+        default=4,
+        metadata={"help": "Mixed-hash: how many arith heads per n-gram size (in addition to n_rq_levels_used)."},
     )
     clip_grad_per_group: bool = field(
         default=False,

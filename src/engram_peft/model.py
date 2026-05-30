@@ -135,6 +135,22 @@ class EngramModel(nn.Module, GenerationMixin):
                 table_dir=config.rq_table_dir,
                 pad_id=mapped_pad_id,
             )
+        elif config.hash_backend == "mixed":
+            assert config.rq_table_dir is not None, (
+                "rq_table_dir must be set when hash_backend='mixed'"
+            )
+            from engram_peft.mixed_hashing import MixedHashMapping
+            self.hash_mapping = MixedHashMapping(
+                table_dir=config.rq_table_dir,
+                compressed_vocab_size=config.compressed_vocab_size,
+                engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
+                ngram_sizes=config.ngram_sizes,
+                layer_ids=config.target_layers,
+                pad_id=mapped_pad_id,
+                n_arith_heads_per_ngram=config.n_arith_heads_per_ngram,
+                n_rq_levels_used=config.n_rq_levels_used,
+                seed=config.seed,
+            )
         else:
             self.hash_mapping = NgramHashMapping(
                 engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
@@ -183,9 +199,12 @@ class EngramModel(nn.Module, GenerationMixin):
             self.adapters.float()
 
     def _flat_primes_for_layer(self, layer_id: int) -> list[int]:
-        """Per-head embedding table sizes for a layer (arithmetic primes or RQ [K]*heads)."""
+        """Per-head embedding table sizes for a layer (arithmetic primes / RQ [K]*heads / mixed)."""
         if isinstance(self.hash_mapping, RQNgramMapping):
             return self.hash_mapping.primes
+        # MixedHashMapping (avoid hard import dep to keep RQNgramMapping isinstance check cheap)
+        if hasattr(self.hash_mapping, "flat_primes"):
+            return self.hash_mapping.flat_primes(layer_id)
         prime_list = self.hash_mapping.prime_tables[layer_id]
         return [p for head_primes in prime_list for p in head_primes]
 
