@@ -84,6 +84,49 @@ def load_zsre(limit):
     return out
 
 
+def _load_wiki_json(path: str, limit):
+    """KnowEdit wiki_recent / wiki_counterfact loader.
+    Both have {subject, prompt, target_new, rephrase (str), locality, [ground_truth for cf]}.
+    wiki_recent has no ground_truth -> set target_true="" (efficacy reduces to just predicting new).
+    """
+    data = json.load(open(path))
+    if limit: data = data[: min(limit, len(data))]
+    out = []
+    for ex in data:
+        target_true = ""
+        gt = ex.get("ground_truth")
+        if gt:
+            if isinstance(gt, list) and gt:
+                gt = gt[0]
+            if isinstance(gt, str): target_true = gt
+        rp = ex.get("rephrase")
+        paraphrases = [rp] if isinstance(rp, str) and rp else (list(rp) if isinstance(rp, list) else [])
+        # locality (neighborhood): Relation_Specificity prompts with their own ground_truth
+        neighbors = []
+        for nb in ex.get("locality", {}).get("Relation_Specificity", []):
+            nb_gt = nb.get("ground_truth")
+            while isinstance(nb_gt, list) and nb_gt:
+                nb_gt = nb_gt[0]
+            if isinstance(nb_gt, str) and nb["prompt"]:
+                neighbors.append((nb["prompt"], nb_gt))
+        out.append({
+            "prompt": ex["prompt"],
+            "target_new": ex["target_new"],
+            "target_true": target_true,
+            "paraphrases": paraphrases,
+            "neighbors": neighbors,
+        })
+    return out
+
+
+def load_wiki_recent(limit):
+    return _load_wiki_json("data/wiki_recent/benchmark/wiki_recent/recent_test.json", limit)
+
+
+def load_wiki_cf(limit):
+    return _load_wiki_json("data/wiki_cf/benchmark/wiki_counterfact/test_cf.json", limit)
+
+
 def load_mquake(limit):
     data = json.load(open("data/mquake.json"))
     if limit: data = data[: min(limit, len(data))]
@@ -128,7 +171,7 @@ def eval_one(tok, model, ex):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", required=True, choices=["counterfact", "zsre", "mquake"])
+    ap.add_argument("--dataset", required=True, choices=["counterfact", "zsre", "mquake", "wiki_recent", "wiki_cf"])
     ap.add_argument("--model_name", required=True)
     ap.add_argument("--engram_weights", default=None)
     ap.add_argument("--lora_weights", default=None)
@@ -151,7 +194,8 @@ def main():
         model = base
     model.eval()
 
-    loader = {"counterfact": load_counterfact, "zsre": load_zsre, "mquake": load_mquake}[args.dataset]
+    loader = {"counterfact": load_counterfact, "zsre": load_zsre, "mquake": load_mquake,
+              "wiki_recent": load_wiki_recent, "wiki_cf": load_wiki_cf}[args.dataset]
     cases = loader(args.limit)
     n = len(cases)
     print(f"[eval_ke] dataset={args.dataset} n={n}")

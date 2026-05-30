@@ -112,6 +112,10 @@ def prepare_dataset(
         # Use the pre-built JSONL (data/counterfact/corpus_train.jsonl: 118k sentences from 19728 cases).
         # subset_size here is in SENTENCES (not cases); set big to use full corpus.
         train_ds, val_ds = _load_jsonl_corpus("data/counterfact/corpus_train.jsonl", subset_size, eval_size, seed=seed)
+    elif dataset == "wiki_recent":
+        train_ds, val_ds = _load_jsonl_corpus("data/wiki_recent/corpus_train.jsonl", subset_size, eval_size, seed=seed)
+    elif dataset == "wiki_cf":
+        train_ds, val_ds = _load_jsonl_corpus("data/wiki_cf/corpus_train.jsonl", subset_size, eval_size, seed=seed)
     elif dataset == "zsre":
         train_ds, val_ds = _load_zsre(subset_size, eval_size, seed=seed)
     elif dataset == "mquake":
