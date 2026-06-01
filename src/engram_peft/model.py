@@ -151,6 +151,22 @@ class EngramModel(nn.Module, GenerationMixin):
                 n_rq_levels_used=config.n_rq_levels_used,
                 seed=config.seed,
             )
+        elif config.hash_backend == "mixed_v2":
+            assert config.rq_table_dir is not None, (
+                "rq_table_dir must be set when hash_backend='mixed_v2'"
+            )
+            from engram_peft.mixed_hashing import MixedV2HashMapping
+            self.hash_mapping = MixedV2HashMapping(
+                table_dir=config.rq_table_dir,
+                compressed_vocab_size=config.compressed_vocab_size,
+                engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
+                ngram_sizes=config.ngram_sizes,
+                layer_ids=config.target_layers,
+                pad_id=mapped_pad_id,
+                n_arith_heads_per_ngram=config.n_arith_heads_per_ngram,
+                n_rq_levels_used=config.n_rq_levels_used,
+                seed=config.seed,
+            )
         else:
             self.hash_mapping = NgramHashMapping(
                 engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
@@ -422,17 +438,34 @@ class EngramModel(nn.Module, GenerationMixin):
 
             if isinstance(self._current_hash_indices, dict):
                 indices_np = self._current_hash_indices[layer_id]
+                if isinstance(indices_np, dict):
+                    converted: dict[str, torch.Tensor] = {}
+                    for name, branch_indices in indices_np.items():
+                        if (
+                            not self.base_model.training
+                            and branch_indices.shape[1] > curr_seq_len
+                        ):
+                            branch_indices = branch_indices[:, -curr_seq_len:]
+
+                        if branch_indices.shape[1] != curr_seq_len:
+                            return args
+
+                        converted[name] = safe_from_numpy(branch_indices).to(
+                            hidden_states.device
+                        )
+                    engram_hash_indices = converted
+                else:
                 # During inference (incremental generation), hidden_states might be [B, 1, D]
                 # while current_hash_indices contains the whole buffered context.
-                if not self.base_model.training and indices_np.shape[1] > curr_seq_len:
-                    indices_np = indices_np[:, -curr_seq_len:]
+                    if not self.base_model.training and indices_np.shape[1] > curr_seq_len:
+                        indices_np = indices_np[:, -curr_seq_len:]
 
-                if indices_np.shape[1] != curr_seq_len:
-                    return args
+                    if indices_np.shape[1] != curr_seq_len:
+                        return args
 
-                engram_hash_indices = safe_from_numpy(indices_np).to(
-                    hidden_states.device
-                )
+                    engram_hash_indices = safe_from_numpy(indices_np).to(
+                        hidden_states.device
+                    )
             else:
                 # Assume it's the stacked tensor [B, L, num_layers, total_heads]
                 try:

@@ -139,7 +139,8 @@ class EngramConfig(PreTrainedConfig):
         metadata={
             "help": "Address backend: 'arithmetic' (original XOR-multiply hash), "
             + "'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py), "
-            + "or 'mixed' (per-head split: n_rq_levels_used RQ + n_arith_heads_per_ngram arith)."
+            + "'mixed' (per-head split: n_rq_levels_used RQ + n_arith_heads_per_ngram arith), "
+            + "or 'mixed_v2' (separate RQ/arith branches fused by a token-level gate)."
         },
     )
     rq_table_dir: str | None = field(

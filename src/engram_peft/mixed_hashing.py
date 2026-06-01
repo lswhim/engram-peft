@@ -70,6 +70,75 @@ class MixedHashMapping:
             out += list(arith_prime_list[i])
         return out
 
+
+@dataclass
+class MixedV2HashMapping:
+    """Separate RQ and arithmetic hashes for late, token-level gated fusion."""
+
+    table_dir: str
+    compressed_vocab_size: int
+    engram_vocab_size_per_ngram: list[int]
+    ngram_sizes: list[int]
+    layer_ids: list[int]
+    pad_id: int
+    n_arith_heads_per_ngram: int
+    n_rq_levels_used: int
+    seed: int = 0
+
+    rq: RQNgramMapping = field(init=False)
+    arith: NgramHashMapping = field(init=False)
+    total_heads: int = field(init=False)
+    max_ngram_size: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.rq = RQNgramMapping(table_dir=self.table_dir, pad_id=self.pad_id)
+        assert self.n_rq_levels_used <= self.rq.num_levels, (
+            f"n_rq_levels_used={self.n_rq_levels_used} > RQ table M={self.rq.num_levels}"
+        )
+        self.arith = NgramHashMapping(
+            engram_vocab_size_per_ngram=self.engram_vocab_size_per_ngram,
+            ngram_sizes=self.ngram_sizes,
+            n_head_per_ngram=self.n_arith_heads_per_ngram,
+            layer_ids=self.layer_ids,
+            compressed_vocab_size=self.compressed_vocab_size,
+            pad_id=self.pad_id,
+            seed=self.seed,
+        )
+        self.total_heads = (
+            self.n_rq_levels_used + self.n_arith_heads_per_ngram
+        ) * len(self.ngram_sizes)
+        self.max_ngram_size = max(self.ngram_sizes)
+
+    def flat_primes(self, layer_id: int) -> list[int]:
+        out: list[int] = []
+        arith_prime_list = self.arith.prime_tables[layer_id]
+        for i in range(len(self.ngram_sizes)):
+            out += [self.rq.codebook_size] * self.n_rq_levels_used
+            out += list(arith_prime_list[i])
+        return out
+
+    def hash(self, input_ids) -> dict[int, dict[str, np.ndarray]]:
+        if not isinstance(input_ids, np.ndarray):
+            input_ids = np.asarray(input_ids)
+
+        rq_view = self.rq.hash(input_ids)
+        rq_arr = rq_view._codes
+        arith_per_layer = self.arith.hash(input_ids)
+
+        M = self.rq.num_levels
+        R = self.n_rq_levels_used
+        out: dict[int, dict[str, np.ndarray]] = {}
+        rq_chunks = [
+            rq_arr[..., i * M : i * M + R] for i in range(len(self.ngram_sizes))
+        ]
+        rq_codes = np.concatenate(rq_chunks, axis=-1)
+        for layer_id in self.layer_ids:
+            out[layer_id] = {
+                "rq": rq_codes,
+                "arith": arith_per_layer[layer_id],
+            }
+        return out
+
     def hash(self, input_ids) -> dict[int, np.ndarray]:
         """Compressed ids [B, L] -> per-layer codes [B, L, total_heads]."""
         if not isinstance(input_ids, np.ndarray):

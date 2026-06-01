@@ -320,6 +320,13 @@ class EngramLayer(nn.Module):
     multi_head_embedding: MultiHeadEmbedding
     gating: ContextAwareGating
     short_conv: ShortConv
+    rq_multi_head_embedding: MultiHeadEmbedding | None
+    arith_multi_head_embedding: MultiHeadEmbedding | None
+    rq_gating: ContextAwareGating | None
+    arith_gating: ContextAwareGating | None
+    rq_short_conv: ShortConv | None
+    arith_short_conv: ShortConv | None
+    fusion_gate: nn.Sequential | None
     last_norm_ratio: float
 
     def __init__(
@@ -382,31 +389,106 @@ class EngramLayer(nn.Module):
             seed=config.seed,
         )
 
-        # 1. MultiHeadEmbedding
-        self.multi_head_embedding = MultiHeadEmbedding(
-            primes=primes,
-            embedding_dim_per_head=self.embedding_dim_per_head,
-            sparse=config.use_sparse_embeddings,
-        )
+        self.rq_multi_head_embedding = None
+        self.arith_multi_head_embedding = None
+        self.rq_gating = None
+        self.arith_gating = None
+        self.rq_short_conv = None
+        self.arith_short_conv = None
+        self.fusion_gate = None
 
-        # 2. Context-Aware Gating
-        self.gating = ContextAwareGating(
-            config=config,
-            engram_hidden_size=self.total_embedding_dim,
-            hidden_size=self.hidden_dim,
-            hc_mult=self.num_branches,
-            zero_init=config.gating_zero_init,
-        )
+        if config.hash_backend == "mixed_v2":
+            n_sizes = len(self.ngram_sizes)
+            r = config.n_rq_levels_used
+            a = config.n_arith_heads_per_ngram
+            rq_primes: list[int] = []
+            arith_primes: list[int] = []
+            pos = 0
+            for _ in range(n_sizes):
+                rq_primes += primes[pos : pos + r]
+                pos += r
+                arith_primes += primes[pos : pos + a]
+                pos += a
 
-        # 3. ShortConv
-        self.short_conv = ShortConv(
-            hidden_size=self.hidden_dim,
-            kernel_size=self.kernel_size,
-            dilation=self.dilation,
-            hc_mult=self.num_branches,
-            activation=True,
-            zero_init=config.conv_zero_init,
-        )
+            self.rq_multi_head_embedding = MultiHeadEmbedding(
+                primes=rq_primes,
+                embedding_dim_per_head=self.embedding_dim_per_head,
+                sparse=config.use_sparse_embeddings,
+            )
+            self.arith_multi_head_embedding = MultiHeadEmbedding(
+                primes=arith_primes,
+                embedding_dim_per_head=self.embedding_dim_per_head,
+                sparse=config.use_sparse_embeddings,
+            )
+            self.rq_gating = ContextAwareGating(
+                config=config,
+                engram_hidden_size=self.total_embedding_dim,
+                hidden_size=self.hidden_dim,
+                hc_mult=self.num_branches,
+                zero_init=config.gating_zero_init,
+            )
+            self.arith_gating = ContextAwareGating(
+                config=config,
+                engram_hidden_size=self.total_embedding_dim,
+                hidden_size=self.hidden_dim,
+                hc_mult=self.num_branches,
+                zero_init=config.gating_zero_init,
+            )
+            self.rq_short_conv = ShortConv(
+                hidden_size=self.hidden_dim,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                hc_mult=self.num_branches,
+                activation=True,
+                zero_init=config.conv_zero_init,
+            )
+            self.arith_short_conv = ShortConv(
+                hidden_size=self.hidden_dim,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                hc_mult=self.num_branches,
+                activation=True,
+                zero_init=config.conv_zero_init,
+            )
+            self.fusion_gate = nn.Sequential(
+                nn.RMSNorm(self.hidden_dim),
+                nn.Linear(self.hidden_dim, 1),
+            )
+            fusion_linear = self.fusion_gate[1]
+            assert isinstance(fusion_linear, nn.Linear)
+            nn.init.zeros_(fusion_linear.weight)
+            nn.init.zeros_(fusion_linear.bias)
+
+            # Kept for compatibility with code that expects these attributes.
+            self.multi_head_embedding = self.rq_multi_head_embedding
+            self.gating = self.rq_gating
+            self.short_conv = self.rq_short_conv
+        else:
+            # 1. MultiHeadEmbedding
+            self.multi_head_embedding = MultiHeadEmbedding(
+                primes=primes,
+                embedding_dim_per_head=self.embedding_dim_per_head,
+                sparse=config.use_sparse_embeddings,
+            )
+
+            # 2. Context-Aware Gating
+            self.gating = ContextAwareGating(
+                config=config,
+                engram_hidden_size=self.total_embedding_dim,
+                hidden_size=self.hidden_dim,
+                hc_mult=self.num_branches,
+                zero_init=config.gating_zero_init,
+            )
+
+            # 3. ShortConv
+            self.short_conv = ShortConv(
+                hidden_size=self.hidden_dim,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                hc_mult=self.num_branches,
+                activation=True,
+                zero_init=config.conv_zero_init,
+            )
         self.last_norm_ratio = 0.0  # Default to zero
 
     @property
@@ -434,7 +516,7 @@ class EngramLayer(nn.Module):
         hidden_states: Float[torch.Tensor, "batch seq hidden_dim"]
         | Float[torch.Tensor, "batch seq hc_mult hidden_dim"]
         | None = None,
-        engram_hash_indices: Int64[torch.Tensor, "batch seq total_heads"] | None = None,
+        engram_hash_indices: Any = None,
     ) -> (
         Float[torch.Tensor, "batch seq hidden_dim"]
         | Float[torch.Tensor, "batch seq hc_mult hidden_dim"]
@@ -468,10 +550,6 @@ class EngramLayer(nn.Module):
             hashes_np = self.hash_mapping.hash(c_ids)[self.layer_id]
             engram_hash_indices = safe_from_numpy(hashes_np).to(hidden_states.device)
 
-        # Step 1: Retrieve vectors from MultiHeadEmbedding and flatten
-        all_embeddings = self.multi_head_embedding(engram_hash_indices)
-        e_t = all_embeddings.flatten(start_dim=-2).to(hidden_states.device)
-
         # Ensure hidden_states is [B, L, M, D] if it's not already
         is_3d = hidden_states.dim() == 3
         if is_3d:
@@ -480,6 +558,57 @@ class EngramLayer(nn.Module):
             )
         else:
             hidden_states_m = hidden_states
+
+        if self.config.hash_backend == "mixed_v2":
+            if not isinstance(engram_hash_indices, dict):
+                raise ValueError("mixed_v2 expects {'rq': ..., 'arith': ...} hash indices")
+            assert self.rq_multi_head_embedding is not None
+            assert self.arith_multi_head_embedding is not None
+            assert self.rq_gating is not None
+            assert self.arith_gating is not None
+            assert self.rq_short_conv is not None
+            assert self.arith_short_conv is not None
+            assert self.fusion_gate is not None
+
+            rq_embeddings = self.rq_multi_head_embedding(
+                engram_hash_indices["rq"]
+            ).flatten(start_dim=-2)
+            arith_embeddings = self.arith_multi_head_embedding(
+                engram_hash_indices["arith"]
+            ).flatten(start_dim=-2)
+
+            y_rq = self.rq_short_conv(self.rq_gating(rq_embeddings, hidden_states_m))
+            y_arith = self.arith_short_conv(
+                self.arith_gating(arith_embeddings, hidden_states_m)
+            )
+
+            gate_source = hidden_states if is_3d else hidden_states_m.mean(dim=2)
+            fusion = torch.sigmoid(self.fusion_gate(gate_source)).unsqueeze(2)
+            y = fusion * y_rq + (1.0 - fusion) * y_arith
+
+            if is_3d:
+                if self.num_branches == 1:
+                    y = y.squeeze(2)
+                else:
+                    y = y.sum(dim=2)
+
+            if self.config.enable_telemetry:
+                with torch.no_grad():
+                    y_norm = cast(
+                        "torch.Tensor", torch.linalg.vector_norm(y.float(), ord=2)
+                    )
+                    h_norm = cast(
+                        "torch.Tensor",
+                        torch.linalg.vector_norm(hidden_states.float(), ord=2),
+                    )
+                    self.last_norm_ratio = (y_norm / (h_norm + 1e-6)).item()
+
+            return hidden_states + y
+
+        # Step 4: Context-Aware Gating modulation
+        # Step 1: Retrieve vectors from MultiHeadEmbedding and flatten
+        all_embeddings = self.multi_head_embedding(engram_hash_indices)
+        e_t = all_embeddings.flatten(start_dim=-2).to(hidden_states.device)
 
         # Step 4: Context-Aware Gating modulation
         # gated_value has shape [B, L, M, D]
