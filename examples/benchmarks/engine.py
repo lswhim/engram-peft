@@ -269,7 +269,7 @@ class BenchmarkEngine:
         tmp_dir = "outputs/benchmarks/tmp"
         if os.path.exists(tmp_dir):
             print(f"Cleaning up temporary checkpoints in {tmp_dir}...")
-            shutil.rmtree(tmp_dir)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def run_all(self, method_names: list[str]) -> None:
         for name in method_names:
