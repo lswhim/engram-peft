@@ -409,15 +409,17 @@ class EngramLayer(nn.Module):
                 pos += r
                 arith_primes += primes[pos : pos + a]
                 pos += a
+            rq_embedding_dim_per_head = self.total_embedding_dim // (n_sizes * r)
+            arith_embedding_dim_per_head = self.total_embedding_dim // (n_sizes * a)
 
             self.rq_multi_head_embedding = MultiHeadEmbedding(
                 primes=rq_primes,
-                embedding_dim_per_head=self.embedding_dim_per_head,
+                embedding_dim_per_head=rq_embedding_dim_per_head,
                 sparse=config.use_sparse_embeddings,
             )
             self.arith_multi_head_embedding = MultiHeadEmbedding(
                 primes=arith_primes,
-                embedding_dim_per_head=self.embedding_dim_per_head,
+                embedding_dim_per_head=arith_embedding_dim_per_head,
                 sparse=config.use_sparse_embeddings,
             )
             self.rq_gating = ContextAwareGating(
