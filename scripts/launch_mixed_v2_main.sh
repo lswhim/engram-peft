@@ -58,6 +58,20 @@ run_wave() {
 
 wait_for_wiki_lora
 
+lora_eval_cmds=()
+for ds_entry in "wiki_cf|wcfF|unused" "wiki_recent|wrF|unused"; do
+  IFS='|' read -r dataset suffix _rq_name <<<"$ds_entry"
+  for model_entry in "${models[@]}"; do
+    IFS='|' read -r model_name model_short <<<"$model_entry"
+    model_base=${model_name##*/}
+    ckpt="outputs/benchmarks/ckpt_${model_base}_lora_r16_seed2024_${suffix}"
+    log="run_logs/eval_ke_${model_short}_${dataset}_lora_${suffix}.log"
+    lora_eval_cmds+=("$PY -u examples/eval_ke.py --dataset $dataset --model_name $model_name --lora_weights $ckpt ${COMMON_EVAL[*]} > $log 2>&1")
+  done
+done
+
+run_wave lora_eval_cmds
+
 train_cmds=()
 for ds_entry in "${datasets[@]}"; do
   IFS='|' read -r dataset suffix rq_name <<<"$ds_entry"
