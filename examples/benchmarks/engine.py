@@ -122,8 +122,10 @@ class BenchmarkEngine:
             else torch.float16
         )
         model = AutoModelForCausalLM.from_pretrained(
-            self.model_name, dtype=dtype, device_map="auto"
+            self.model_name, dtype=dtype
         )
+        if torch.cuda.is_available():
+            model = model.to(torch.device("cuda"))
         return model
 
     def get_fresh_model(self) -> PreTrainedModel:
