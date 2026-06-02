@@ -241,7 +241,13 @@ def train_engram(
         if hasattr(training_args, k):
             setattr(training_args, k, v)
 
-    collator = EngramDataCollator(tokenizer=wash_tokenizer(tokenizer), config=config)
+    if getattr(config, "hash_backend", "arithmetic") == "mixed_v2":
+        collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=False,
+        )
+    else:
+        collator = EngramDataCollator(tokenizer=wash_tokenizer(tokenizer), config=config)
     trainer = EngramTrainer(
         model=model,
         args=training_args,

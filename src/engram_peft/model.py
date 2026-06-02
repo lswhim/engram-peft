@@ -581,11 +581,16 @@ class EngramModel(nn.Module, GenerationMixin):
                     new_seq_len = input_ids.shape[1]
                     if isinstance(self._current_hash_indices, dict):
                         for layer_id in self._current_hash_indices:
-                            self._current_hash_indices[layer_id] = (
-                                self._current_hash_indices[layer_id][
+                            layer_indices = self._current_hash_indices[layer_id]
+                            if isinstance(layer_indices, dict):
+                                for branch in layer_indices:
+                                    layer_indices[branch] = layer_indices[branch][
+                                        :, -new_seq_len:, :
+                                    ]
+                            else:
+                                self._current_hash_indices[layer_id] = layer_indices[
                                     :, -new_seq_len:, :
                                 ]
-                            )
                     elif isinstance(self._current_hash_indices, torch.Tensor):
                         self._current_hash_indices = self._current_hash_indices[
                             :, -new_seq_len:, :, :
@@ -683,7 +688,7 @@ class EngramModel(nn.Module, GenerationMixin):
         input_ids: Int[torch.Tensor, "batch seq"] | None = None,
         labels: Int[torch.Tensor, "batch seq"] | None = None,
         attention_mask: Int[torch.Tensor, "batch seq"] | None = None,
-        engram_hash_indices: Int64[torch.Tensor, "batch seq total_heads"] | None = None,
+        engram_hash_indices: Any = None,
         **kwargs: Any,
     ) -> Any:
         """
@@ -698,7 +703,13 @@ class EngramModel(nn.Module, GenerationMixin):
             self._current_hash_indices = None
 
             input_ids_to_hash = input_ids
-            if engram_hash_indices is not None:
+            if (
+                engram_hash_indices is not None
+                and not (
+                    self.config.hash_backend == "mixed_v2"
+                    and not isinstance(engram_hash_indices, dict)
+                )
+            ):
                 self._current_hash_indices = engram_hash_indices
             elif input_ids_to_hash is not None:
                 if self.compressor:
