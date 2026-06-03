@@ -104,7 +104,7 @@ for ds_entry in "${datasets[@]}"; do
     rq_dir="rq_tables/${rq_name}"
     method="${METHOD_PREFIX}${rq_dir}"
     log="run_logs/train_ke_${model_short}_${dataset}_mixed_v2_${suffix}.log"
-    train_cmds+=("$PY -u examples/compare_engram_lora.py --dataset $dataset --model_name $model_name ${COMMON_TRAIN[*]} '$method' --seed 2024 --wandb --wandb_project engram-rq-matrix --run_suffix _${suffix}_mixv2 > $log 2>&1")
+    train_cmds+=("$PY -u examples/compare_engram_lora.py --dataset $dataset --model_name $model_name ${COMMON_TRAIN[*]} '$method' --seed 2024 --run_suffix _${suffix}_mixv2 > $log 2>&1")
   done
 done
 
