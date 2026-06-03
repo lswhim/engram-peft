@@ -15,6 +15,7 @@ PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 COMMON_TRAIN=(--max_steps 1000 --subset 3000 --batch_size 8 --grad_accum 4 --methods)
 METHOD_PREFIX="engram:hash_backend=mixed_v2,n_rq_levels_used=4,n_arith_heads_per_ngram=4,n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[5,7,13,17],rq_table_dir="
 COMMON_EVAL=(--limit 0)
+read -r -a GPU_IDS <<<"${RUN_GPU_IDS:-0 1 2 3}"
 
 models=(
   "Qwen/Qwen3-0.6B|06b"
@@ -41,12 +42,17 @@ wait_for_wiki_lora() {
 run_wave() {
   local -n cmds=$1
   local pids=()
+  local num_gpus=${#GPU_IDS[@]}
+  if (( num_gpus == 0 )); then
+    echo "[mixed_v2] RUN_GPU_IDS is empty" >&2
+    return 1
+  fi
   for i in "${!cmds[@]}"; do
-    local gpu=$((i % 8))
+    local gpu=${GPU_IDS[$((i % num_gpus))]}
     echo "[mixed_v2] GPU ${gpu}: ${cmds[$i]}"
     CUDA_VISIBLE_DEVICES=$gpu bash -lc "${cmds[$i]}" &
     pids+=("$!")
-    if (( ${#pids[@]} == 8 )); then
+    if (( ${#pids[@]} == num_gpus )); then
       wait "${pids[@]}"
       pids=()
     fi
