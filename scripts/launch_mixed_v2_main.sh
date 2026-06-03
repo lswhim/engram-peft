@@ -9,6 +9,7 @@ export https_proxy=http://star-proxy.oa.com:3128
 export http_proxy=http://star-proxy.oa.com:3128
 export no_proxy=.woa.com,.oa.com,.tencentcos.cn,localhost,127.0.0.1
 export WANDB_INIT_TIMEOUT=300
+export WANDB_MODE=${WANDB_MODE:-offline}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
@@ -62,6 +63,21 @@ run_wave() {
   fi
 }
 
+filter_missing_results() {
+  local -n in_cmds=$1
+  local -n out_cmds=$2
+  out_cmds=()
+  for cmd in "${in_cmds[@]}"; do
+    local log
+    log=$(sed -n 's/.*> \(run_logs\/[^ ]*\.log\) 2>&1.*/\1/p' <<<"$cmd")
+    if [[ -n "$log" ]] && grep -q '^RESULT' "$log" 2>/dev/null; then
+      echo "[mixed_v2] skip completed: $log"
+      continue
+    fi
+    out_cmds+=("$cmd")
+  done
+}
+
 wait_for_wiki_lora
 
 lora_eval_cmds=()
@@ -76,7 +92,9 @@ for ds_entry in "wiki_cf|wcfF|unused" "wiki_recent|wrF|unused"; do
   done
 done
 
-run_wave lora_eval_cmds
+pending_lora_eval_cmds=()
+filter_missing_results lora_eval_cmds pending_lora_eval_cmds
+run_wave pending_lora_eval_cmds
 
 train_cmds=()
 for ds_entry in "${datasets[@]}"; do
