@@ -13,7 +13,7 @@ export WANDB_MODE=${WANDB_MODE:-offline}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
-COMMON_TRAIN=(--max_steps 1000 --subset 3000 --batch_size 8 --grad_accum 4 --methods)
+COMMON_TRAIN_PREFIX=(--max_steps 1000 --subset 3000)
 METHOD_PREFIX="engram:hash_backend=mixed_v2,n_rq_levels_used=4,n_arith_heads_per_ngram=4,n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[5,7,13,17],rq_table_dir="
 COMMON_EVAL=(--limit 0)
 read -r -a GPU_IDS <<<"${RUN_GPU_IDS:-0 1 2 3}"
@@ -78,6 +78,15 @@ filter_missing_results() {
   done
 }
 
+train_batch_args() {
+  local model_short=$1
+  if [[ "$model_short" == "8b" ]]; then
+    echo "--batch_size 1 --grad_accum 32"
+  else
+    echo "--batch_size 8 --grad_accum 4"
+  fi
+}
+
 wait_for_wiki_lora
 
 lora_eval_cmds=()
@@ -104,7 +113,14 @@ for ds_entry in "${datasets[@]}"; do
     rq_dir="rq_tables/${rq_name}"
     method="${METHOD_PREFIX}${rq_dir}"
     log="run_logs/train_ke_${model_short}_${dataset}_mixed_v2_${suffix}.log"
-    train_cmds+=("$PY -u examples/compare_engram_lora.py --dataset $dataset --model_name $model_name ${COMMON_TRAIN[*]} '$method' --seed 2024 --run_suffix _${suffix}_mixv2 > $log 2>&1")
+    model_base=${model_name##*/}
+    ckpt="outputs/benchmarks/ckpt_${model_base}_mixed_v2_h8_seed2024_${suffix}_mixv2"
+    if [[ -f "$ckpt/engram_adapters.safetensors" ]]; then
+      echo "[mixed_v2] skip completed train: $ckpt"
+      continue
+    fi
+    batch_args=$(train_batch_args "$model_short")
+    train_cmds+=("$PY -u examples/compare_engram_lora.py --dataset $dataset --model_name $model_name ${COMMON_TRAIN_PREFIX[*]} $batch_args --methods '$method' --seed 2024 --run_suffix _${suffix}_mixv2 > $log 2>&1")
   done
 done
 
@@ -122,5 +138,7 @@ for ds_entry in "${datasets[@]}"; do
   done
 done
 
-run_wave eval_cmds
+pending_eval_cmds=()
+filter_missing_results eval_cmds pending_eval_cmds
+run_wave pending_eval_cmds
 echo "MIXED_V2_MAIN_DONE"
