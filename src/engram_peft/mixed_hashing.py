@@ -70,6 +70,33 @@ class MixedHashMapping:
             out += list(arith_prime_list[i])
         return out
 
+    def hash(self, input_ids) -> dict[int, np.ndarray]:
+        """Compressed ids [B, L] -> per-layer mixed codes [B, L, total_heads]."""
+        if not isinstance(input_ids, np.ndarray):
+            input_ids = np.asarray(input_ids)
+
+        rq_view = self.rq.hash(input_ids)
+        rq_arr = rq_view._codes  # [B, L, M * n_sizes]
+        arith_per_layer = self.arith.hash(input_ids)  # dict[layer_id, [B, L, H * n_sizes]]
+
+        M = self.rq.num_levels
+        H = self.n_arith_heads_per_ngram
+        R = self.n_rq_levels_used
+        n_sizes = len(self.ngram_sizes)
+
+        out: dict[int, np.ndarray] = {}
+        for layer_id in self.layer_ids:
+            arith_arr = arith_per_layer[layer_id]
+            chunks: list[np.ndarray] = []
+            for i in range(n_sizes):
+                # take first R of RQ's M for this n-gram size
+                rq_chunk = rq_arr[..., i * M : i * M + R]
+                arith_chunk = arith_arr[..., i * H : (i + 1) * H]
+                chunks.append(rq_chunk)
+                chunks.append(arith_chunk)
+            out[layer_id] = np.concatenate(chunks, axis=-1)
+        return out
+
 
 @dataclass
 class MixedV2HashMapping:
@@ -137,31 +164,4 @@ class MixedV2HashMapping:
                 "rq": rq_codes,
                 "arith": arith_per_layer[layer_id],
             }
-        return out
-
-    def hash(self, input_ids) -> dict[int, np.ndarray]:
-        """Compressed ids [B, L] -> per-layer codes [B, L, total_heads]."""
-        if not isinstance(input_ids, np.ndarray):
-            input_ids = np.asarray(input_ids)
-
-        rq_view = self.rq.hash(input_ids)
-        rq_arr = rq_view._codes  # [B, L, M * n_sizes]
-        arith_per_layer = self.arith.hash(input_ids)  # dict[layer_id, [B, L, H * n_sizes]]
-
-        M = self.rq.num_levels
-        H = self.n_arith_heads_per_ngram
-        R = self.n_rq_levels_used
-        n_sizes = len(self.ngram_sizes)
-
-        out: dict[int, np.ndarray] = {}
-        for layer_id in self.layer_ids:
-            arith_arr = arith_per_layer[layer_id]
-            chunks: list[np.ndarray] = []
-            for i in range(n_sizes):
-                # take first R of RQ's M for this n-gram size
-                rq_chunk = rq_arr[..., i * M : i * M + R]
-                arith_chunk = arith_arr[..., i * H : (i + 1) * H]
-                chunks.append(rq_chunk)
-                chunks.append(arith_chunk)
-            out[layer_id] = np.concatenate(chunks, axis=-1)
         return out
