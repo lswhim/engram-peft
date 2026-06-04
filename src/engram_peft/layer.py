@@ -605,7 +605,7 @@ class EngramLayer(nn.Module):
                     )
                     self.last_norm_ratio = (y_norm / (h_norm + 1e-6)).item()
 
-            return hidden_states + y
+            return (hidden_states + y).to(hidden_states.dtype)
 
         # Step 4: Context-Aware Gating modulation
         # Step 1: Retrieve vectors from MultiHeadEmbedding and flatten
