@@ -83,6 +83,61 @@ DEFAULT_OUTPUT_DIR = "outputs/popqa_benchmark"
 DEFAULT_SEED = 42
 TRAIN_RATIO = 0.8
 
+
+def normalize_backend_name(name: str) -> str:
+    name = name.strip().lower()
+    if name in {"arith", "arithmetic"}:
+        return "arithmetic"
+    if name in {"rq", "mixed", "mixed_v2"}:
+        return name
+    raise ValueError(f"Unsupported hash backend: {name}")
+
+
+def backend_tag_for_output(backend: str, rq_table_dir: str | None) -> str:
+    backend = normalize_backend_name(backend)
+    if backend == "arithmetic":
+        return "arith"
+    if backend == "rq":
+        suffix = os.path.basename(os.path.normpath(rq_table_dir)) if rq_table_dir else "rq"
+        return f"rq_{suffix}"
+    if backend == "mixed":
+        suffix = os.path.basename(os.path.normpath(rq_table_dir)) if rq_table_dir else "mixed"
+        return f"mixed_{suffix}"
+    return f"{backend}_{os.path.basename(os.path.normpath(rq_table_dir)) if rq_table_dir else backend}"
+
+
+def engram_output_dir(
+    base_output_dir: str, backend: str, rq_table_dir: str | None
+) -> str:
+    tag = backend_tag_for_output(backend, rq_table_dir)
+    if backend == "arithmetic":
+        return os.path.join(base_output_dir, "engram")
+    return os.path.join(base_output_dir, f"engram_{tag}")
+
+
+def build_engram_config(
+    args: argparse.Namespace,
+    backend: str,
+    sparse_embeddings: bool,
+) -> EngramConfig:
+    normalized_backend = normalize_backend_name(backend)
+    if normalized_backend in {"rq", "mixed", "mixed_v2"} and not args.rq_table_dir:
+        raise ValueError(
+            f"backend={normalized_backend} requires --rq_table_dir"
+        )
+
+    return EngramConfig(
+        embedding_dim=args.embedding_dim,
+        target_layers=args.target_layers,
+        use_sparse_embeddings=sparse_embeddings,
+        entropy_loss_weight=args.entropy_loss_weight if not args.use_deepspeed else 0.0,
+        hash_backend=normalized_backend,
+        rq_table_dir=args.rq_table_dir if normalized_backend != "arithmetic" else None,
+        n_rq_levels_used=args.n_rq_levels_used,
+        n_arith_heads_per_ngram=args.n_arith_heads_per_ngram,
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Answer Normalization (Exact Match)
 # ──────────────────────────────────────────────────────────────────────
@@ -459,6 +514,12 @@ def parse_args() -> argparse.Namespace:
                   --engram_path outputs/popqa_benchmark/engram \\
                   --lora_path outputs/popqa_benchmark/lora
 
+              # Compare arithmetic and RQ backends in one run (need --rq_table_dir)
+              python examples/engram_knowledge_memory.py \\
+                  --backends arith rq \\
+                  --rq_table_dir /path/to/rq_tables/biomed_qwen3_06b \\
+                  --lora
+
               # Distributed training
               torchrun --nproc_per_node=8 examples/engram_knowledge_memory.py
         """),
@@ -521,6 +582,27 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--embedding_dim", type=int, default=1280)
     p.add_argument("--target_layers", type=int, nargs="+", default=[1, 14])
     p.add_argument("--entropy_loss_weight", type=float, default=0.01)
+    p.add_argument(
+        "--backends",
+        nargs="+",
+        default=["arithmetic"],
+        choices=["arith", "arithmetic", "rq", "mixed", "mixed_v2"],
+        help="Run Engram with one or more hash backends: arith/rq/mixed/mixed_v2.",
+    )
+    p.add_argument("--rq_table_dir", type=str, default=None)
+    p.add_argument("--n_rq_levels_used", type=int, default=4)
+    p.add_argument("--n_arith_heads_per_ngram", type=int, default=4)
+    p.add_argument(
+        "--disable_sparse_embeddings",
+        action="store_true",
+        help="Disable sparse embeddings to avoid sparse-CUDA grad norm issues in single-GPU runs.",
+    )
+    p.add_argument(
+        "--max_grad_norm",
+        type=float,
+        default=1.0,
+        help="Trainer max grad norm (pass 0 to disable clipping).",
+    )
     return p.parse_args()
 
 
@@ -582,40 +664,44 @@ def main() -> None:
         logging.info("PopQA: %d train / %d test", len(train_raw), len(test_raw))
 
     # ── Compute paths ─────────────────────────────────────────────
-    engram_save_path = (
-        os.path.join(args.output_dir, "engram")
-        if args.mode == "train"
-        else args.engram_path
-    )
+    requested_backends = [normalize_backend_name(b) for b in args.backends]
+    requested_backends = list(dict.fromkeys(requested_backends))
+    if args.mode == "eval" and len(requested_backends) != 1:
+        raise ValueError("Eval mode supports a single --backends entry for a single --engram_path.")
+
+    if args.mode == "train":
+        engram_paths = {
+            backend: engram_output_dir(
+                args.output_dir, backend, args.rq_table_dir
+            )
+            for backend in requested_backends
+        }
+    else:
+        engram_paths = {requested_backends[0]: args.engram_path}
+
     lora_save_path = (
         os.path.join(args.output_dir, "lora")
         if args.mode == "train" and (args.lora or args.joint)
         else args.lora_path
     )
-    # Resolve eval-time paths from training defaults
-    if args.mode == "eval":
-        engram_save_path = args.engram_path
-        lora_save_path = args.lora_path
+
+    if is_main:
+        logging.info("  Engram backend(s): %s", ", ".join(requested_backends))
+        logging.info("  Backend save paths: %s", engram_paths)
 
     # ═══════════════════════════════════════════════════════════════
     #  TRAINING
     # ═══════════════════════════════════════════════════════════════
     if args.mode == "train":
         # ── Engram config ────────────────────────────────────────
-        sparse_embeddings = not (
-            use_deepspeed or int(os.environ.get("WORLD_SIZE", "1")) > 1
+        sparse_embeddings = (
+            not args.disable_sparse_embeddings
+            and not (use_deepspeed or int(os.environ.get("WORLD_SIZE", "1")) > 1)
         )
         if use_deepspeed and args.entropy_loss_weight > 0:
             logging.warning(
                 "DeepSpeed disables MixedOptimizer; entropy loss may not be applied."
             )
-
-        engram_config = EngramConfig(
-            embedding_dim=args.embedding_dim,
-            target_layers=args.target_layers,
-            use_sparse_embeddings=sparse_embeddings,
-            entropy_loss_weight=args.entropy_loss_weight if not use_deepspeed else 0.0,
-        )
 
         deepspeed_config: str | None = None
         if use_deepspeed:
@@ -624,51 +710,63 @@ def main() -> None:
         # ── Engram-only ──────────────────────────────────────────
         if args.engram:
             logging.info(">>> Training Engram-only...")
-            model = build_engram_model(
-                args.model, tokenizer, use_deepspeed, engram_config
-            )
-            train_tokenized = tokenize_dataset(
-                train_raw, tokenizer, max_length=args.max_length
-            )
-            trainer = EngramTrainer(
-                model=model,
-                args=TrainingArguments(
-                    output_dir=args.output_dir,
-                    per_device_train_batch_size=args.batch_size,
-                    gradient_accumulation_steps=args.grad_accum,
-                    learning_rate=args.learning_rate,
-                    num_train_epochs=args.num_epochs,
-                    max_steps=args.max_steps if args.max_steps > 0 else -1,
-                    warmup_ratio=args.warmup_ratio,
-                    logging_steps=args.logging_steps,
-                    save_steps=0,
-                    save_total_limit=0,
-                    eval_strategy="no",
-                    bf16=True,
-                    deepspeed=deepspeed_config,
-                    ddp_find_unused_parameters=False,
-                    dataloader_num_workers=2,
-                    seed=args.seed,
-                    report_to="none",
-                    remove_unused_columns=False,
-                ),
-                train_dataset=train_tokenized,
-                data_collator=EngramDataCollator(
-                    tokenizer=tokenizer, config=model.config, mlm=False
-                ),
-            )
-            trainer.train()
-            if is_main:
-                os.makedirs(engram_save_path, exist_ok=True)
-                try:
-                    saved = trainer.accelerator.unwrap_model(trainer.model)
-                    saved.save_pretrained(engram_save_path)
-                except Exception:
-                    model.save_pretrained(engram_save_path)
-                logging.info("Engram adapter saved to %s", engram_save_path)
-            del model, trainer, train_tokenized
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            for backend in requested_backends:
+                engram_save_path = engram_paths[backend]
+                backend_config = build_engram_config(args, backend, sparse_embeddings)
+                logging.info(
+                    "  -> Engram backend=%s, tag=%s",
+                    backend,
+                    backend_tag_for_output(backend, args.rq_table_dir),
+                )
+                model = build_engram_model(
+                    args.model, tokenizer, use_deepspeed, backend_config
+                )
+                train_tokenized = tokenize_dataset(
+                    train_raw, tokenizer, max_length=args.max_length
+                )
+                trainer = EngramTrainer(
+                    model=model,
+                    args=TrainingArguments(
+                        output_dir=os.path.join(
+                            args.output_dir,
+                            f"tmp_engram_{backend_tag_for_output(backend, args.rq_table_dir)}",
+                        ),
+                        per_device_train_batch_size=args.batch_size,
+                        gradient_accumulation_steps=args.grad_accum,
+                        learning_rate=args.learning_rate,
+                        num_train_epochs=args.num_epochs,
+                        max_steps=args.max_steps if args.max_steps > 0 else -1,
+                        max_grad_norm=args.max_grad_norm,
+                        warmup_ratio=args.warmup_ratio,
+                        logging_steps=args.logging_steps,
+                        save_steps=0,
+                        save_total_limit=0,
+                        eval_strategy="no",
+                        bf16=True,
+                        deepspeed=deepspeed_config,
+                        ddp_find_unused_parameters=False,
+                        dataloader_num_workers=2,
+                        seed=args.seed,
+                        report_to="none",
+                        remove_unused_columns=False,
+                    ),
+                    train_dataset=train_tokenized,
+                    data_collator=EngramDataCollator(
+                        tokenizer=tokenizer, config=model.config, mlm=False
+                    ),
+                )
+                trainer.train()
+                if is_main:
+                    os.makedirs(engram_save_path, exist_ok=True)
+                    try:
+                        saved = trainer.accelerator.unwrap_model(trainer.model)
+                        saved.save_pretrained(engram_save_path)
+                    except Exception:
+                        model.save_pretrained(engram_save_path)
+                    logging.info("Engram adapter saved to %s", engram_save_path)
+                del model, trainer, train_tokenized
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         # ── LoRA-only ────────────────────────────────────────────
         if args.lora:
@@ -688,6 +786,7 @@ def main() -> None:
                     learning_rate=args.learning_rate,
                     num_train_epochs=args.num_epochs,
                     max_steps=args.max_steps if args.max_steps > 0 else -1,
+                    max_grad_norm=args.max_grad_norm,
                     warmup_ratio=args.warmup_ratio,
                     logging_steps=args.logging_steps,
                     save_steps=0,
@@ -718,58 +817,68 @@ def main() -> None:
         # ── Joint (Engram + LoRA) ────────────────────────────────
         if args.joint:
             logging.info(">>> Joint training Engram + LoRA...")
-            model = build_joint_model(
-                args.model,
-                tokenizer,
-                use_deepspeed,
-                engram_config,
-                lora_r=args.lora_r,
-                lora_alpha=args.lora_alpha,
-            )
-            train_tokenized = tokenize_dataset(
-                train_raw, tokenizer, max_length=args.max_length
-            )
-            trainer = EngramTrainer(
-                model=model,
-                args=TrainingArguments(
-                    output_dir=args.output_dir,
-                    per_device_train_batch_size=args.batch_size,
-                    gradient_accumulation_steps=args.grad_accum,
-                    learning_rate=args.learning_rate,
-                    num_train_epochs=args.num_epochs,
-                    max_steps=args.max_steps if args.max_steps > 0 else -1,
-                    warmup_ratio=args.warmup_ratio,
-                    logging_steps=args.logging_steps,
-                    save_steps=0,
-                    save_total_limit=0,
-                    eval_strategy="no",
-                    bf16=True,
-                    deepspeed=deepspeed_config,
-                    ddp_find_unused_parameters=False,
-                    dataloader_num_workers=2,
-                    seed=args.seed,
-                    report_to="none",
-                    remove_unused_columns=False,
-                ),
-                train_dataset=train_tokenized,
-                data_collator=EngramDataCollator(
-                    tokenizer=tokenizer, config=model.config, mlm=False
-                ),
-            )
-            trainer.train()
-            if is_main:
-                os.makedirs(engram_save_path, exist_ok=True)
-                os.makedirs(lora_save_path, exist_ok=True)
-                saved = trainer.accelerator.unwrap_model(trainer.model)
-                if not isinstance(saved, EngramModel):
-                    saved = model
-                saved.save_pretrained(engram_save_path)
-                saved.base_model.save_pretrained(lora_save_path)
-                logging.info("Engram adapter saved to %s", engram_save_path)
-                logging.info("LoRA adapter saved to %s", lora_save_path)
-            del model, trainer, train_tokenized
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            for backend in requested_backends:
+                engram_save_path = engram_paths[backend]
+                backend_config = build_engram_config(args, backend, sparse_embeddings)
+                model = build_joint_model(
+                    args.model,
+                    tokenizer,
+                    use_deepspeed,
+                    backend_config,
+                    lora_r=args.lora_r,
+                    lora_alpha=args.lora_alpha,
+                )
+                train_tokenized = tokenize_dataset(
+                    train_raw, tokenizer, max_length=args.max_length
+                )
+                trainer = EngramTrainer(
+                    model=model,
+                    args=TrainingArguments(
+                        output_dir=os.path.join(
+                            args.output_dir,
+                            f"tmp_joint_{backend_tag_for_output(backend, args.rq_table_dir)}",
+                        ),
+                        per_device_train_batch_size=args.batch_size,
+                        gradient_accumulation_steps=args.grad_accum,
+                        learning_rate=args.learning_rate,
+                        num_train_epochs=args.num_epochs,
+                        max_steps=args.max_steps if args.max_steps > 0 else -1,
+                        max_grad_norm=args.max_grad_norm,
+                        warmup_ratio=args.warmup_ratio,
+                        logging_steps=args.logging_steps,
+                        save_steps=0,
+                        save_total_limit=0,
+                        eval_strategy="no",
+                        bf16=True,
+                        deepspeed=deepspeed_config,
+                        ddp_find_unused_parameters=False,
+                        dataloader_num_workers=2,
+                        seed=args.seed,
+                        report_to="none",
+                        remove_unused_columns=False,
+                    ),
+                    train_dataset=train_tokenized,
+                    data_collator=EngramDataCollator(
+                        tokenizer=tokenizer, config=model.config, mlm=False
+                    ),
+                )
+                trainer.train()
+                if is_main:
+                    os.makedirs(engram_save_path, exist_ok=True)
+                    os.makedirs(lora_save_path, exist_ok=True)
+                    saved = trainer.accelerator.unwrap_model(trainer.model)
+                    if not isinstance(saved, EngramModel):
+                        saved = model
+                    saved.save_pretrained(engram_save_path)
+                    saved.base_model.save_pretrained(lora_save_path)
+                    logging.info(
+                        "Engram adapter saved to %s",
+                        engram_save_path,
+                    )
+                    logging.info("LoRA adapter saved to %s", lora_save_path)
+                del model, trainer, train_tokenized
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     # ═══════════════════════════════════════════════════════════════
     #  EVALUATION
@@ -786,15 +895,18 @@ def main() -> None:
 
     eval_steps: list[tuple[str, ...]] = [("Base",)]
 
-    engram_available = engram_save_path and os.path.isdir(engram_save_path)
+    engram_available = {backend: path for backend, path in engram_paths.items() if path and os.path.isdir(path)}
     lora_available = lora_save_path and os.path.isdir(lora_save_path)
 
-    if engram_available:
-        eval_steps.append(("+Engram", "engram"))
+    for backend, path in engram_available.items():
+        tag = backend_tag_for_output(backend, args.rq_table_dir)
+        eval_steps.append((f"+Engram({tag})", "engram", path))
     if lora_available:
         eval_steps.append(("+LoRA", "lora"))
-    if engram_available and lora_available:
-        eval_steps.append(("Joint (Engram+LoRA)", "engram", "lora"))
+    if lora_available:
+        for backend, path in engram_available.items():
+            tag = backend_tag_for_output(backend, args.rq_table_dir)
+            eval_steps.append((f"Joint({tag}+LoRA)", "engram", path, "lora"))
 
     for i, step in enumerate(eval_steps, 1):
         name = step[0]
@@ -804,8 +916,9 @@ def main() -> None:
         if "lora" in step:
             model = PeftModel.from_pretrained(model, lora_save_path)
         if "engram" in step:
+            engram_path = step[step.index("engram") + 1]
             model = EngramModel.from_pretrained(
-                model, engram_save_path, tokenizer=wash_tokenizer(tokenizer)
+                model, engram_path, tokenizer=wash_tokenizer(tokenizer)
             )
         results[name] = evaluate_em(model, tokenizer, test_raw, max_samples=eval_max)
         logging.info(
@@ -824,9 +937,12 @@ def main() -> None:
 
     if args.mode == "train" and is_main:
         logging.info("\nAdapters saved to: %s", args.output_dir)
+        logging.info("  Engram backends: %s", ", ".join(engram_paths.values()))
+        if args.lora or args.joint:
+            logging.info("  LoRA adapter: %s", lora_save_path)
         logging.info(
             "Re-run with: --mode eval --engram_path %s [--lora_path %s]",
-            engram_save_path,
+            ", ".join(engram_paths.values()),
             lora_save_path,
         )
 
