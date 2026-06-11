@@ -44,6 +44,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
 import textwrap
 from typing import Any, cast
 
@@ -734,46 +736,45 @@ def main() -> None:
             logging.info("Skipping %s; already evaluated.", name)
             return
 
-        logging.info("Evaluating %s on %d held-out PopQA samples...", name, eval_max)
-        base = load_4bit_backbone(args.model)
-        model = base
+        logging.info("Evaluating %s with lm-eval on %d held-out PopQA samples...", name, eval_max)
+        cmd = [
+            sys.executable,
+            "examples/eval_popqa_lm_eval.py",
+            "--model",
+            args.model,
+            "--batch_size",
+            str(args.eval_batch_size),
+        ]
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "eval"
+        out_path = os.path.join(args.output_dir, "lm_eval", f"{safe_name}.json")
+        cmd.extend(["--output_path", out_path])
+        if args.eval_max_samples > 0:
+            cmd.extend(["--limit", str(args.eval_max_samples)])
         if "lora" in step:
             if not lora_save_path or not os.path.isdir(lora_save_path):
                 logging.info("Skipping %s; LoRA adapter is not available.", name)
-                del base
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
                 return
-            model = PeftModel.from_pretrained(model, lora_save_path)
+            cmd.extend(["--lora_path", lora_save_path])
         if "engram" in step:
             engram_path = step[step.index("engram") + 1]
             if not engram_path or not os.path.isdir(engram_path):
                 logging.info("Skipping %s; Engram adapter is not available.", name)
-                del base
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
                 return
-            model = EngramModel.from_pretrained(
-                model, engram_path, tokenizer=wash_tokenizer(tokenizer)
-            )
+            cmd.extend(["--engram_path", engram_path])
 
-        results[name] = evaluate_em(
-            model,
-            tokenizer,
-            test_raw,
-            max_samples=eval_max,
-            batch_size=args.eval_batch_size,
+        env = os.environ.copy()
+        env.setdefault("HF_HUB_DISABLE_XET", "1")
+        subprocess.run(cmd, check=True, env=env)
+        with open(out_path, encoding="utf-8") as f:
+            lm_eval_results = json.load(f)
+        popqa_result = lm_eval_results["results"]["popqa"]
+        em = next(
+            float(value)
+            for key, value in popqa_result.items()
+            if key == "em" or key.startswith("em,")
         )
-        logging.info(
-            "  %s accuracy: %.1f%% (%d/%d)",
-            name,
-            results[name]["accuracy"],
-            results[name]["correct"],
-            results[name]["total"],
-        )
-        del base, model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        results[name] = {"accuracy": em * 100.0}
+        logging.info("  %s lm-eval EM: %.2f%%", name, results[name]["accuracy"])
 
     def current_eval_steps() -> list[tuple[str, ...]]:
         eval_steps: list[tuple[str, ...]] = [("Base",)]
