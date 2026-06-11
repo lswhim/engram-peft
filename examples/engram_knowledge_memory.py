@@ -159,6 +159,24 @@ def format_qa_text(question: str, answer: str) -> str:
     return f"Question: {question}\nAnswer: {answer}"
 
 
+def parse_possible_answers(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value if str(v)]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value] if value else []
+        if isinstance(parsed, list):
+            return [str(v) for v in parsed if str(v)]
+        if parsed is None:
+            return []
+        return [str(parsed)]
+    return [str(value)]
+
+
 def load_popqa(
     max_samples: int | None = None,
     train_ratio: float = TRAIN_RATIO,
@@ -175,9 +193,9 @@ def load_popqa(
         raw = raw.select(range(max_samples))
 
     def add_text(example: dict[str, Any]) -> dict[str, Any]:
-        answer: str = (
-            example["possible_answers"][0] if example["possible_answers"] else ""
-        )
+        possible_answers = parse_possible_answers(example.get("possible_answers"))
+        answer = possible_answers[0] if possible_answers else ""
+        example["possible_answers"] = possible_answers
         example["text"] = format_qa_text(example["question"], answer)
         return example
 
