@@ -403,11 +403,12 @@ def evaluate_em(
     test_dataset: Dataset,
     max_samples: int = 200,
     max_new_tokens: int = 32,
+    batch_size: int = 16,
 ) -> dict[str, Any]:
     """Compute Exact Match accuracy on a held-out PopQA test set.
 
-    For each sample: greedy-decode from ``"Question: {q}\\nAnswer:"``,
-    extract the first line, normalize, compare with all possible answers.
+    Greedy-decode batched prompts of the form ``"Question: {q}\\nAnswer:"``,
+    extract the first generated line, normalize, compare with all possible answers.
 
     Returns:
         ``{"correct": int, "total": int, "accuracy": float}``
@@ -419,16 +420,17 @@ def evaluate_em(
     old_padding_side = tokenizer.padding_side
     tokenizer.padding_side = "left"
 
-    for i in range(total):
-        question: str = test_dataset[i]["question"]
-        possible: list[str] = test_dataset[i]["possible_answers"]
+    model.eval()
+    batch_size = max(1, batch_size)
 
-        prompt = f"Question: {question}\nAnswer:"
-        inputs = tokenizer(prompt, return_tensors="pt")
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        batch = [test_dataset[i] for i in range(start, end)]
+        prompts = [f"Question: {row['question']}\nAnswer:" for row in batch]
+        inputs = tokenizer(prompts, return_tensors="pt", padding=True)
         inputs = {k: v.to(device) for k, v in inputs.items()}
         input_len = inputs["input_ids"].shape[-1]
 
-        model.eval()
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
@@ -436,21 +438,28 @@ def evaluate_em(
             pad_token_id=tokenizer.pad_token_id,
         )
 
-        response = cast(
-            "str", tokenizer.decode(outputs[0][input_len:], skip_special_tokens=True)
-        )
-        pred = response.split("\n")[0].strip()
-        pred_norm = normalize_answer(pred)
+        for offset, row in enumerate(batch):
+            response = cast(
+                "str",
+                tokenizer.decode(
+                    outputs[offset][input_len:],
+                    skip_special_tokens=True,
+                ),
+            )
+            pred = response.split("\n")[0].strip()
+            pred_norm = normalize_answer(pred)
 
-        if any(normalize_answer(a) == pred_norm for a in possible):
-            correct += 1
+            possible: list[str] = row["possible_answers"]
+            if any(normalize_answer(a) == pred_norm for a in possible):
+                correct += 1
 
-        if (i + 1) % 50 == 0:
+        done = end
+        if done % 50 == 0 or done == total:
             logging.info(
                 "  EM progress: %d/%d  (acc so far: %.1f%%)",
-                i + 1,
+                done,
                 total,
-                correct / (i + 1) * 100,
+                correct / done * 100,
             )
 
     tokenizer.padding_side = old_padding_side
@@ -541,6 +550,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=200,
         help="Cap evaluation samples (0 = all)",
+    )
+    p.add_argument(
+        "--eval_batch_size",
+        type=int,
+        default=16,
+        help="Batch size for greedy EM generation.",
     )
     # Distributed
     p.add_argument("--use_deepspeed", action="store_true")
@@ -689,6 +704,78 @@ def main() -> None:
         logging.info("  Engram backend(s): %s", ", ".join(requested_backends))
         logging.info("  Backend save paths: %s", engram_paths)
 
+    eval_max = args.eval_max_samples if args.eval_max_samples > 0 else len(test_raw)
+    results: dict[str, dict[str, Any]] = {}
+
+    def run_eval_step(step: tuple[str, ...]) -> None:
+        if not is_main:
+            return
+
+        name = step[0]
+        if name in results:
+            logging.info("Skipping %s; already evaluated.", name)
+            return
+
+        logging.info("Evaluating %s on %d held-out PopQA samples...", name, eval_max)
+        base = load_4bit_backbone(args.model)
+        model = base
+        if "lora" in step:
+            if not lora_save_path or not os.path.isdir(lora_save_path):
+                logging.info("Skipping %s; LoRA adapter is not available.", name)
+                del base
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return
+            model = PeftModel.from_pretrained(model, lora_save_path)
+        if "engram" in step:
+            engram_path = step[step.index("engram") + 1]
+            if not engram_path or not os.path.isdir(engram_path):
+                logging.info("Skipping %s; Engram adapter is not available.", name)
+                del base
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return
+            model = EngramModel.from_pretrained(
+                model, engram_path, tokenizer=wash_tokenizer(tokenizer)
+            )
+
+        results[name] = evaluate_em(
+            model,
+            tokenizer,
+            test_raw,
+            max_samples=eval_max,
+            batch_size=args.eval_batch_size,
+        )
+        logging.info(
+            "  %s accuracy: %.1f%% (%d/%d)",
+            name,
+            results[name]["accuracy"],
+            results[name]["correct"],
+            results[name]["total"],
+        )
+        del base, model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def current_eval_steps() -> list[tuple[str, ...]]:
+        eval_steps: list[tuple[str, ...]] = [("Base",)]
+        engram_available = {
+            backend: path
+            for backend, path in engram_paths.items()
+            if path and os.path.isdir(path)
+        }
+        lora_available = bool(lora_save_path and os.path.isdir(lora_save_path))
+
+        for backend, path in engram_available.items():
+            tag = backend_tag_for_output(backend, args.rq_table_dir)
+            eval_steps.append((f"+Engram({tag})", "engram", path))
+        if lora_available:
+            eval_steps.append(("+LoRA", "lora"))
+            for backend, path in engram_available.items():
+                tag = backend_tag_for_output(backend, args.rq_table_dir)
+                eval_steps.append((f"Joint({tag}+LoRA)", "engram", path, "lora"))
+        return eval_steps
+
     # ═══════════════════════════════════════════════════════════════
     #  TRAINING
     # ═══════════════════════════════════════════════════════════════
@@ -767,6 +854,10 @@ def main() -> None:
                 del model, trainer, train_tokenized
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                if is_main:
+                    tag = backend_tag_for_output(backend, args.rq_table_dir)
+                    logging.info(">>> Immediate eval after Engram(%s) training", tag)
+                    run_eval_step((f"+Engram({tag})", "engram", engram_save_path))
 
         # ── LoRA-only ────────────────────────────────────────────
         if args.lora:
@@ -813,6 +904,14 @@ def main() -> None:
             del lora_model, lora_trainer, train_tokenized
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            if is_main:
+                logging.info(">>> Immediate eval after LoRA training")
+                run_eval_step(("+LoRA", "lora"))
+                for backend, engram_path in engram_paths.items():
+                    if not engram_path or not os.path.isdir(engram_path):
+                        continue
+                    tag = backend_tag_for_output(backend, args.rq_table_dir)
+                    run_eval_step((f"Joint({tag}+LoRA)", "engram", engram_path, "lora"))
 
         # ── Joint (Engram + LoRA) ────────────────────────────────
         if args.joint:
@@ -879,13 +978,14 @@ def main() -> None:
                 del model, trainer, train_tokenized
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                if is_main:
+                    tag = backend_tag_for_output(backend, args.rq_table_dir)
+                    logging.info(">>> Immediate eval after Joint(%s+LoRA) training", tag)
+                    run_eval_step((f"Joint({tag}+LoRA)", "engram", engram_save_path, "lora"))
 
     # ═══════════════════════════════════════════════════════════════
     #  EVALUATION
     # ═══════════════════════════════════════════════════════════════
-    eval_max = args.eval_max_samples if args.eval_max_samples > 0 else len(test_raw)
-    results: dict[str, dict[str, Any]] = {}
-
     if not is_main:
         return  # evaluation runs on main process only
 
@@ -893,44 +993,8 @@ def main() -> None:
     logging.info("  Evaluation on %d held-out PopQA samples", eval_max)
     logging.info("=" * 60)
 
-    eval_steps: list[tuple[str, ...]] = [("Base",)]
-
-    engram_available = {backend: path for backend, path in engram_paths.items() if path and os.path.isdir(path)}
-    lora_available = lora_save_path and os.path.isdir(lora_save_path)
-
-    for backend, path in engram_available.items():
-        tag = backend_tag_for_output(backend, args.rq_table_dir)
-        eval_steps.append((f"+Engram({tag})", "engram", path))
-    if lora_available:
-        eval_steps.append(("+LoRA", "lora"))
-    if lora_available:
-        for backend, path in engram_available.items():
-            tag = backend_tag_for_output(backend, args.rq_table_dir)
-            eval_steps.append((f"Joint({tag}+LoRA)", "engram", path, "lora"))
-
-    for i, step in enumerate(eval_steps, 1):
-        name = step[0]
-        logging.info("[%d/%d] Evaluating %s...", i, len(eval_steps), name)
-        base = load_4bit_backbone(args.model)
-        model = base
-        if "lora" in step:
-            model = PeftModel.from_pretrained(model, lora_save_path)
-        if "engram" in step:
-            engram_path = step[step.index("engram") + 1]
-            model = EngramModel.from_pretrained(
-                model, engram_path, tokenizer=wash_tokenizer(tokenizer)
-            )
-        results[name] = evaluate_em(model, tokenizer, test_raw, max_samples=eval_max)
-        logging.info(
-            "  %s accuracy: %.1f%% (%d/%d)",
-            name,
-            results[name]["accuracy"],
-            results[name]["correct"],
-            results[name]["total"],
-        )
-        del base, model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    for step in current_eval_steps():
+        run_eval_step(step)
 
     # --- Print table ---
     print_comparison(results)
