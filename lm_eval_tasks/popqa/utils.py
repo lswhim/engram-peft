@@ -4,6 +4,9 @@ import json
 import re
 from typing import Any
 
+DEFAULT_SEED = 42
+TRAIN_RATIO = 0.8
+
 
 def normalize_answer(text: str) -> str:
     text = text.lower().strip()
@@ -38,7 +41,11 @@ def process_docs(dataset):
             "answers": answers,
         }
 
-    return dataset.map(_process_doc)
+    processed = dataset.map(_process_doc)
+    return processed.train_test_split(
+        test_size=1 - TRAIN_RATIO,
+        seed=DEFAULT_SEED,
+    )["test"]
 
 
 def process_results(doc: dict[str, Any], results: list[str]) -> dict[str, float]:
