@@ -95,6 +95,7 @@ def active_experiments() -> list[dict[str, Any]]:
         "shuffle_rq_table.py",
         "analyze_rq_addresses.py",
         "analyze_lm_slice_results.py",
+        "analyze_capacity_sweep.py",
         "evaluate_lm_slices.py",
         "evaluate_standard_lm.py",
         "run_xtreme_xnli.py",
@@ -134,7 +135,7 @@ def active_experiments() -> list[dict[str, Any]]:
             else "frequency-matched shuffle"
             if script == "shuffle_rq_table.py"
             else "paired bootstrap"
-            if script == "analyze_lm_slice_results.py"
+            if script in {"analyze_lm_slice_results.py", "analyze_capacity_sweep.py"}
             else "address diagnostics"
             if script == "analyze_rq_addresses.py"
             else "—"
@@ -218,6 +219,28 @@ def phase2_results() -> dict[str, dict[str, Any]]:
         ):
             continue
         results[f"{match.group(1)}_seed{match.group(2)}"] = payload
+    return results
+
+
+def capacity_results() -> dict[str, dict[str, Any]]:
+    """Read only fixed-step, paper-eligible K64/K1024 sweep checkpoints."""
+    results: dict[str, dict[str, Any]] = {}
+    for path in Path("outputs/benchmarks").glob("*.json"):
+        payload = read_json(path)
+        params = payload.get("params")
+        metrics = payload.get("metrics")
+        if not isinstance(params, dict) or not isinstance(metrics, dict):
+            continue
+        suffix = str(params.get("run_suffix", ""))
+        match = re.fullmatch(
+            r"_paper_capacity_k(64|1024)_fixedsteps_(.+)_seed42", suffix
+        )
+        if not match or not (
+            metrics.get("fixed_steps_complete") is True
+            and metrics.get("completed_steps") == metrics.get("planned_steps") == 12_208
+        ):
+            continue
+        results[f"k{match.group(1)}_{match.group(2)}"] = payload
     return results
 
 
@@ -313,6 +336,10 @@ def collect(output_dir: Path) -> dict[str, Any]:
         for seed in GATE1_SEEDS
         for method in STANDARD_METHODS
     }
+    capacity_root = output_dir / "capacity_sweep"
+    capacity_pipeline = read_json(capacity_root / "pipeline_state.json")
+    capacity_comparison = read_json(capacity_root / "comparison.json")
+    capacity_gate1 = capacity_results()
     external: dict[str, Any] = {}
     for benchmark in ("xnli", "pawsx"):
         external[benchmark] = {
@@ -360,6 +387,11 @@ def collect(output_dir: Path) -> dict[str, Any]:
             )
         )
     )
+    capacity_complete = (
+        capacity_pipeline.get("note") == "all capacity experiments complete"
+        and capacity_comparison.get("status") == "complete"
+        and len(capacity_gate1) == 2 * len(STANDARD_METHODS)
+    )
     return {
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "gpus": gpu_snapshot(),
@@ -382,6 +414,9 @@ def collect(output_dir: Path) -> dict[str, Any]:
         "phase2_gate1": phase2_gate1,
         "phase2_slice_comparison": phase2_slice_comparison,
         "phase2_standard": phase2_standard,
+        "capacity_pipeline": capacity_pipeline,
+        "capacity_comparison": capacity_comparison,
+        "capacity_gate1": capacity_gate1,
         "gate1": gate1,
         "gate1_all": gate1_all,
         "legacy_gate1": legacy_gate1,
@@ -393,6 +428,7 @@ def collect(output_dir: Path) -> dict[str, Any]:
         "complete_standard_lm": complete_standard_lm,
         "complete_head_interventions": complete_head_interventions,
         "phase2_complete": phase2_complete,
+        "capacity_complete": capacity_complete,
         "all_complete": (
             complete_gate1_total == len(GATE1) * len(GATE1_SEEDS)
             and complete_slice_manifests == len(GATE1_SEEDS)
@@ -403,6 +439,7 @@ def collect(output_dir: Path) -> dict[str, Any]:
             and complete_head_interventions == 6
             and head_intervention_comparison.get("status") == "complete"
             and phase2_complete
+            and capacity_complete
             and queue_complete
             and address_diagnostics.get("status") == "complete"
         ),
@@ -634,6 +671,33 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
         items.append("Gate-1 已通过预注册条件；390,656-row、单 epoch one-pass replication 已启动。")
     elif phase2.get("status") in {"no_go", "failed"}:
         items.append("Gate-1 未通过预注册条件；one-pass 扩规模已自动停止，当前结果不得包装成正向方法结论。")
+    capacity = snapshot.get("capacity_comparison", {})
+    if capacity.get("status") == "complete":
+        fragments = []
+        for value in (64, 256, 1024):
+            result = (
+                capacity.get("results", {})
+                .get(str(value), {})
+                .get("rq_shuffled", {})
+                .get("3gram_semantic_neighbor_shared_code", {})
+            )
+            delta = result.get("delta_nll") if isinstance(result, dict) else None
+            ci = result.get("ci95") if isinstance(result, dict) else None
+            if isinstance(delta, int | float) and isinstance(ci, list) and len(ci) == 2:
+                fragments.append(
+                    f"K={value}: ΔNLL={delta:.4f} [{ci[0]:.4f}, {ci[1]:.4f}]"
+                )
+        items.append(
+            "有限容量曲线（Semantic-RQ − RQ-Shuffled，3g semantic/shared）："
+            + "；".join(fragments)
+            + "。该曲线首轮为单 seed，关键端点仍需复现。"
+        )
+    else:
+        state = snapshot.get("capacity_pipeline", {}).get("note")
+        items.append(
+            "K={64,256,1024} finite-memory capacity sweep 已串行排队；"
+            + (f"当前状态：{state}。" if state else "将在 one-pass 队列结束后自动启动。")
+        )
     items.append("旧 Arithmetic (matched) 实际仅约 32 行/头；中间 v2 又因原实现使用递增质数桶而非固定 256 行/头。两者均不进入主表，主表只读取 arithmetic_fixed 的 exact 目录。")
     items.append("早期 Gate-1 run 被 EarlyStoppingCallback 在约 1,600/12,208 step 截停，只覆盖约 13M tokens；这些结果仅作诊断。主表只读取禁用 early stopping、严格跑满 12,208 steps 的 fixedsteps run。")
     items.append("正式 Gate-1 的 100,007,936 指 processed token slots：48,832 条序列重复 8 个完整 epoch，不是 100M 个独立 token；它是机制 stress test，不能替代后续 one-pass LM replication。")
@@ -884,6 +948,50 @@ def render(snapshot: dict[str, Any]) -> str:
         phase2_rows.append(f"<tr><th>{labels[method]}</th>{''.join(cells)}</tr>")
     phase2_decision = snapshot.get("phase2_decision", {})
     phase2_status = html.escape(str(phase2_decision.get("status", "waiting")))
+    capacity_rows = []
+    capacity_runs = snapshot.get("capacity_gate1", {})
+    for capacity in (64, 256, 1024):
+        for method in STANDARD_METHODS:
+            payload = (
+                snapshot.get("gate1_all", {}).get(f"{method}_seed42", {})
+                if capacity == 256
+                else capacity_runs.get(f"k{capacity}_{method}", {})
+            )
+            metrics = payload.get("metrics", {}) if isinstance(payload, dict) else {}
+            capacity_rows.append(
+                f"<tr><th>K={capacity}</th><td>{labels[method]}</td>"
+                f"<td>{'完成' if metrics else '等待/运行中'}</td>"
+                f"<td>{fmt(metrics.get('eval_loss'))}</td>"
+                f"<td>{fmt(metrics.get('peak_memory_gb'), 2)}</td></tr>"
+            )
+    capacity_comparison_rows = []
+    capacity_comparison = snapshot.get("capacity_comparison", {})
+    capacity_values = (
+        capacity_comparison.get("results", {})
+        if isinstance(capacity_comparison, dict)
+        else {}
+    )
+    for capacity in (64, 256, 1024):
+        for control, display in (
+            ("arithmetic_matched", "vs Arithmetic-fixed"),
+            ("rq_shuffled", "vs RQ-Shuffled"),
+        ):
+            values = capacity_values.get(str(capacity), {}).get(control, {})
+            overall = values.get("overall", {}) if isinstance(values, dict) else {}
+            shared = (
+                values.get("3gram_semantic_neighbor_shared_code", {})
+                if isinstance(values, dict)
+                else {}
+            )
+            overall_ci = overall.get("ci95") if isinstance(overall, dict) else None
+            shared_ci = shared.get("ci95") if isinstance(shared, dict) else None
+            capacity_comparison_rows.append(
+                f"<tr><th>K={capacity}</th><td>{display}</td>"
+                f"<td>{fmt(overall.get('delta_nll'))}</td>"
+                f"<td>{'[' + fmt(overall_ci[0]) + ', ' + fmt(overall_ci[1]) + ']' if isinstance(overall_ci, list) and len(overall_ci) == 2 else '—'}</td>"
+                f"<td>{fmt(shared.get('delta_nll'))}</td>"
+                f"<td>{'[' + fmt(shared_ci[0]) + ', ' + fmt(shared_ci[1]) + ']' if isinstance(shared_ci, list) and len(shared_ci) == 2 else '—'}</td></tr>"
+            )
     ext_rows = []
     for benchmark, row in snapshot["external"].items():
         ext_rows.append(
@@ -901,7 +1009,7 @@ def render(snapshot: dict[str, Any]) -> str:
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">{refresh}
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic-RQ Paper Lab</title>
 <style>:root{{--bg:#071018;--panel:#0d1c28;--line:#20394a;--text:#edf7fb;--muted:#8eabb9;--cyan:#52d6df;--green:#55d69e;--amber:#ffc66d;--red:#ff7185}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 15% 0,#11364b,transparent 32%),var(--bg);color:var(--text);font:14px/1.5 system-ui,"PingFang SC",sans-serif}}main{{max-width:1450px;margin:auto;padding:34px 24px 70px}}h1{{margin:0;font-size:34px}}.lead{{color:var(--muted);margin:5px 0 22px}}h2{{margin:32px 0 12px}}.gpus{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column}}.card span{{color:var(--muted)}}.card strong{{font-size:25px;color:var(--cyan)}}.box{{background:rgba(13,28,40,.94);border:1px solid var(--line);border-radius:14px;overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:820px}}th,td{{padding:12px 14px;border-bottom:1px solid var(--line);text-align:right}}th:first-child{{text-align:left}}thead th{{color:var(--muted)}}.pill{{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700}}.done{{color:var(--green);background:#55d69e22}}.run{{color:var(--cyan);background:#52d6df22}}.wait{{color:var(--amber);background:#ffc66d20}}.fail{{color:var(--red);background:#ff718522}}.invalid{{color:#748b96;text-decoration:line-through}}.conclusions{{background:#0c2030;border-left:4px solid var(--cyan);padding:14px 20px;border-radius:8px}}li{{margin:8px 0}}code{{color:var(--cyan)}}@media(max-width:800px){{.gpus{{grid-template-columns:repeat(2,1fr)}}}}</style></head>
-<body><main><h1>Semantic-RQ Paper Lab</h1><div class="lead">Gate 0 地址诊断 → Gate 1 受控语言建模 → 外部验证 · 更新于 {html.escape(snapshot['updated_at'])}</div>
+<body><main><h1>Semantic-RQ Paper Lab</h1><div class="lead">Gate 0 地址诊断 → Gate 1 受控语言建模 → One-pass → Capacity → 外部验证 · 更新于 {html.escape(snapshot['updated_at'])}</div>
 <div class="gpus">{gpu_cards}</div><h2>当前运行任务</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>主 PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
 <h2>Gate 0 · 地址结构诊断</h2><div class="box"><table><thead><tr><th>Order</th><th>ρ(语义, RQ overlap)</th><th>ρ(语义, Shuffled)</th><th>低词面高语义 RQ overlap</th><th>Shuffled overlap</th><th>Held-out coverage</th><th>切片 pairs</th></tr></thead><tbody>{''.join(diagnostic_rows)}</tbody></table></div>
 <h2>主对照 · Frequency-matched RQ-Shuffled 审计</h2><div class="box"><table><thead><tr><th>Seed / Order</th><th>全表 moved</th><th>已访问 rows moved</th><th>行数 histogram</th><th>访问加权 histogram</th><th>同频 singleton rows</th></tr></thead><tbody>{''.join(shuffle_rows)}</tbody></table></div>
@@ -918,6 +1026,8 @@ def render(snapshot: dict[str, Any]) -> str:
 <h2>Shared-head 因果干预（完成 {snapshot['complete_head_interventions']}/6）</h2><div class="box"><table><thead><tr><th>比较</th><th>切片</th><th>ΔNLL</th><th>95% CI</th><th>Tokens</th></tr></thead><tbody>{''.join(intervention_rows) or '<tr><td colspan="5">等待 shared/random-matched masking</td></tr>'}</tbody></table></div>
 <h2>标准 LM Benchmark（完成 {snapshot['complete_standard_lm']}/10）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed</th><th>状态</th><th>Paloma WikiText-103 word PPL ↓</th><th>Paloma C4 word PPL ↓</th><th>LAMBADA Acc ↑</th><th>LAMBADA PPL ↓</th></tr></thead><tbody>{''.join(standard_rows)}</tbody></table></div>
 <h2>Phase 2 · One-pass Replication（Gate: {phase2_status}）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(phase2_rows)}</tbody></table></div>
+<h2>Finite-memory Capacity Sweep · 训练矩阵</h2><div class="box"><table><thead><tr><th>每 head 容量</th><th>方法</th><th>状态</th><th>Eval loss ↓</th><th>峰值显存 GB</th></tr></thead><tbody>{''.join(capacity_rows)}</tbody></table></div>
+<h2>Finite-memory Capacity Sweep · Paired ΔNLL</h2><div class="box"><table><thead><tr><th>每 head 容量</th><th>比较</th><th>Overall ΔNLL ↓</th><th>95% CI</th><th>3g semantic/shared ΔNLL ↓</th><th>95% CI</th></tr></thead><tbody>{''.join(capacity_comparison_rows)}</tbody></table></div>
 <h2>外部验证（Macro accuracy）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>Arithmetic s42</th><th>RQ s42</th><th>RQ s43</th><th>旧 matched s42（无效）</th><th>修正 matched s42</th><th>修正 matched s43</th></tr></thead><tbody>{''.join(ext_rows)}</tbody></table></div>
 <h2>当前可写结论</h2><ul class="conclusions">{conclusion_html}</ul>
 <p class="lead">公平口径：每个 n-gram order 为 8 heads × 256 rows/head = 2048 rows；正式 RQ-Shuffled 只在 LM-train 精确同访问频率组内置换完整 code vector，因此同时保持逐层行数和实际 access-weighted 桶负载，只破坏 n-gram↔语义地址对应。</p>
