@@ -699,6 +699,30 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
                 f"95% CI=[{ci[0]:.4f}, {ci[1]:.4f}]；"
                 + ("支持显著改善。" if significant else "尚不足以宣称显著改善。")
             )
+        interaction_fragments = []
+        for control, display in (
+            ("arithmetic_matched", "Arithmetic-fixed"),
+            ("rq_shuffled", "RQ-Shuffled"),
+        ):
+            interaction = comparison.get("interactions", {}).get(control, {}).get(
+                "3gram_shared_minus_no_shared", {}
+            )
+            value = interaction.get("delta_nll_interaction")
+            interval = interaction.get("ci95")
+            if (
+                isinstance(value, int | float)
+                and isinstance(interval, list)
+                and len(interval) == 2
+            ):
+                interaction_fragments.append(
+                    f"vs {display}: {value:.4f} [{interval[0]:.4f}, {interval[1]:.4f}]"
+                )
+        if interaction_fragments:
+            items.append(
+                "3-gram shared-code − no-shared-code 机制交互 ΔNLL："
+                + "；".join(interaction_fragments)
+                + "；仅当两个 CI 上界均低于 0，才证明收益集中于真正共享 rows。"
+            )
     standard = snapshot.get("standard_lm", {})
     if all(
         standard.get(f"{method}_seed{seed}", {}).get("status") == "complete"
@@ -746,9 +770,26 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
     if phase2.get("status") == "waiting":
         items.append("One-pass Phase 2 正由预注册 Gate 等待：Gate-1 bootstrap 完成前不会提前扩规模。")
     elif phase2.get("status") == "pass":
-        items.append("Gate-1 已通过预注册条件；390,656-row、单 epoch one-pass replication 已启动。")
+        items.append(
+            "Gate-1 已通过主切片、shared/no-shared interaction、overall safety "
+            "与 2/3-seed consistency 条件；390,656-row、单 epoch one-pass replication 已启动。"
+        )
     elif phase2.get("status") in {"no_go", "failed"}:
-        items.append("Gate-1 未通过预注册条件；one-pass 扩规模已自动停止，当前结果不得包装成正向方法结论。")
+        failed = [
+            name
+            for name in (
+                "primary_pass",
+                "interaction_pass",
+                "overall_safe",
+                "seed_consistent",
+            )
+            if phase2.get(name) is False
+        ]
+        items.append(
+            "Gate-1 未通过预注册条件"
+            + (f"（失败项：{', '.join(failed)}）" if failed else "")
+            + "；one-pass 扩规模已自动停止，当前结果不得包装成正向方法结论。"
+        )
     capacity = snapshot.get("capacity_comparison", {})
     if capacity.get("status") == "complete":
         fragments = []
@@ -972,6 +1013,23 @@ def render(snapshot: dict[str, Any]) -> str:
                 f"<td>{fmt(metric_value.get('delta_nll'))}</td><td>{ci_text}</td>"
                 f"<td>{metric_value.get('tokens', '—')}</td></tr>"
             )
+        interaction = (
+            comparison.get("interactions", {})
+            .get(control, {})
+            .get("3gram_shared_minus_no_shared", {})
+        )
+        interaction_ci = interaction.get("ci95") if isinstance(interaction, dict) else None
+        interaction_ci_text = (
+            f"[{fmt(interaction_ci[0])}, {fmt(interaction_ci[1])}]"
+            if isinstance(interaction_ci, list) and len(interaction_ci) == 2
+            else "—"
+        )
+        comparison_rows.append(
+            f"<tr><th>{control_label}</th><td>3g shared − no-shared interaction</td>"
+            f"<td>{fmt(interaction.get('delta_nll_interaction'))}</td>"
+            f"<td>{interaction_ci_text}</td>"
+            f"<td>{interaction.get('left_tokens', '—')} / {interaction.get('right_tokens', '—')}</td></tr>"
+        )
     standard_rows = []
     for method in ("base", *STANDARD_METHODS):
         seeds = (42,) if method == "base" else GATE1_SEEDS
