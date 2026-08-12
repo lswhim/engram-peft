@@ -26,6 +26,16 @@ assert _ANALYSIS_SPEC is not None and _ANALYSIS_SPEC.loader is not None
 _ANALYSIS = importlib.util.module_from_spec(_ANALYSIS_SPEC)
 _ANALYSIS_SPEC.loader.exec_module(_ANALYSIS)
 
+_ACCESS_SPEC = importlib.util.spec_from_file_location(
+    "build_crosslingual_access_counts",
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "build_crosslingual_access_counts.py",
+)
+assert _ACCESS_SPEC is not None and _ACCESS_SPEC.loader is not None
+_ACCESS = importlib.util.module_from_spec(_ACCESS_SPEC)
+_ACCESS_SPEC.loader.exec_module(_ACCESS)
+
 
 def test_poly_keys_are_aligned_to_context_end() -> None:
     compressed = np.asarray([[1, 2, 3, 4]], dtype=np.int64)
@@ -75,3 +85,25 @@ def test_paired_document_statistics_preserve_sign() -> None:
     )
     assert values.tolist() == [-1.0, 0.0]
     assert counts.tolist() == [1, 2]
+
+
+def test_crosslingual_access_counts_use_only_valid_covered_positions() -> None:
+    compressed = np.asarray([[1, 2, 3, 4, 0]], dtype=np.int64)
+    attention = np.asarray([[1, 1, 1, 1, 0]], dtype=np.uint8)
+    table_keys = {
+        2: np.asarray([12, 23, 34, 99], dtype=np.int64),
+        3: np.asarray([123, 234, 999], dtype=np.int64),
+    }
+    counts = {
+        order: np.zeros(len(keys), dtype=np.int64)
+        for order, keys in table_keys.items()
+    }
+    _ACCESS.accumulate_access_counts(
+        compressed,
+        attention,
+        base=10,
+        table_keys=table_keys,
+        counts=counts,
+    )
+    assert counts[2].tolist() == [1, 1, 0, 0]
+    assert counts[3].tolist() == [1, 0, 0]
