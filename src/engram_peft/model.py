@@ -15,7 +15,7 @@ from engram_peft import saving
 from engram_peft.compression import CompressedTokenizer
 from engram_peft.config import EngramConfig
 from engram_peft.discovery import ArchitectureResolver
-from engram_peft.hashing import NgramHashMapping
+from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
 from engram_peft.layer import EngramLayer
 from engram_peft.rq_hashing import RQNgramMapping
 from engram_peft.types import (
@@ -67,7 +67,7 @@ class EngramModel(nn.Module, GenerationMixin):
     train_mode: TrainMode
     config: EngramConfig
     compressor: CompressedTokenizer | None
-    hash_mapping: NgramHashMapping | RQNgramMapping
+    hash_mapping: FixedNgramHashMapping | NgramHashMapping | RQNgramMapping
     active_adapter: str
     peft_config: dict[str, EngramConfig]
     adapters: nn.ModuleDict
@@ -134,6 +134,16 @@ class EngramModel(nn.Module, GenerationMixin):
             self.hash_mapping = RQNgramMapping(
                 table_dir=config.rq_table_dir,
                 pad_id=mapped_pad_id,
+            )
+        elif config.hash_backend == "arithmetic_fixed":
+            self.hash_mapping = FixedNgramHashMapping(
+                engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
+                ngram_sizes=config.ngram_sizes,
+                n_head_per_ngram=config.n_head_per_ngram,
+                layer_ids=config.target_layers,
+                compressed_vocab_size=config.compressed_vocab_size,
+                pad_id=mapped_pad_id,
+                seed=config.seed,
             )
         elif config.hash_backend == "mixed":
             assert config.rq_table_dir is not None, (

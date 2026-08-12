@@ -1,5 +1,6 @@
 # pyright: reportUnknownMemberType=none, reportUnknownVariableType=none, reportUnknownArgumentType=none, reportUnknownParameterType=none
 import copy
+from itertools import islice
 from typing import Any
 
 from datasets import Dataset, load_dataset
@@ -13,6 +14,44 @@ def _load_tinystories(subset_size: int, eval_size: int) -> tuple[Any, Any]:
     train_ds = train_ds.select(range(subset_size))
     val_ds = val_ds.select(range(min(len(val_ds), eval_size)))
     return train_ds, val_ds
+
+
+def _load_fineweb(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
+    """Load disjoint FineWeb-Edu rows through the streaming interface.
+
+    The stream is shuffled once and then partitioned before tokenization.  This avoids
+    reading benchmark test text into either the LM training set or the address table.
+    """
+    print(
+        f"Loading FineWeb-Edu sample-10BT (streaming, train={subset_size}, "
+        f"eval={eval_size}, seed={seed})..."
+    )
+    address_reserve_rows = 6_000
+    raw = load_dataset(
+        "HuggingFaceFW/fineweb-edu",
+        "sample-10BT",
+        split="train",
+        streaming=True,
+    ).skip(address_reserve_rows).shuffle(
+        seed=seed, buffer_size=max(subset_size + eval_size, 20_000)
+    )
+    print(
+        f"Reserved the first {address_reserve_rows} stream rows exclusively for "
+        "offline address construction; LM train/eval starts after that boundary."
+    )
+    rows = [
+        {"text": str(example["text"])}
+        for example in islice(raw, subset_size + eval_size)
+        if example.get("text")
+    ]
+    if len(rows) < subset_size + eval_size:
+        raise RuntimeError(
+            f"FineWeb stream returned {len(rows)} usable rows; "
+            f"expected {subset_size + eval_size}"
+        )
+    train_rows = rows[:subset_size]
+    eval_rows = rows[subset_size : subset_size + eval_size]
+    return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
 
 
 def _load_biomed(subset_size: int, eval_size: int, seed: int = 42) -> tuple[Any, Any]:
@@ -106,7 +145,9 @@ def prepare_dataset(
     seed: int = 42,
 ) -> tuple[Any, Any]:
     """Standardized dataset preparation. dataset in {tinystories, biomed, counterfact, zsre, mquake}."""
-    if dataset == "biomed":
+    if dataset == "fineweb":
+        train_ds, val_ds = _load_fineweb(subset_size, eval_size, seed=seed)
+    elif dataset == "biomed":
         train_ds, val_ds = _load_biomed(subset_size, eval_size, seed=seed)
     elif dataset == "counterfact":
         # Use the pre-built JSONL (data/counterfact/corpus_train.jsonl: 118k sentences from 19728 cases).

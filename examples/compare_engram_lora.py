@@ -51,6 +51,11 @@ def main() -> None:
     parser.add_argument("--run_suffix", type=str, default="",
                         help="Optional suffix appended to the ckpt/run tag (e.g. for target_layers ablations).")
     parser.add_argument("--max_steps", type=int, default=50)
+    parser.add_argument(
+        "--disable_early_stopping",
+        action="store_true",
+        help="Run exactly max_steps and save the final model (paper protocol).",
+    )
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--subset", type=int, default=1000)
     parser.add_argument("--grad_accum", type=int, default=2)
@@ -66,7 +71,16 @@ def main() -> None:
         "--dataset",
         type=str,
         default="tinystories",
-        choices=["tinystories", "biomed", "counterfact", "zsre", "mquake", "wiki_recent", "wiki_cf"],
+        choices=[
+            "tinystories",
+            "fineweb",
+            "biomed",
+            "counterfact",
+            "zsre",
+            "mquake",
+            "wiki_recent",
+            "wiki_cf",
+        ],
         help="Training/eval corpus.",
     )
     parser.add_argument("--seed", type=int, default=42, help="Global seed.")
@@ -87,6 +101,14 @@ def main() -> None:
         "--plot_only", action="store_true", help="Don't run, just aggregate and plot"
     )
     parser.add_argument("--files", nargs="+", help="Explicit JSON files to plot")
+    parser.add_argument(
+        "--skip_plot", action="store_true", help="Skip plot generation (safe for parallel runs)."
+    )
+    parser.add_argument(
+        "--skip_inference",
+        action="store_true",
+        help="Skip the qualitative inference demo after training.",
+    )
     parser.add_argument(
         "--list", action="store_true", help="List all historical results"
     )
@@ -155,10 +177,12 @@ def main() -> None:
     engine.run_all(args.methods)
 
     # Auto-plot after run (only current batch)
-    plot_benchmark_comparison(list(engine.results.values()))
+    if not args.skip_plot:
+        plot_benchmark_comparison(list(engine.results.values()))
 
     # Qualitative Inference Demo
-    run_inference_demo(engine)
+    if not args.skip_inference:
+        run_inference_demo(engine)
 
 
 if __name__ == "__main__":

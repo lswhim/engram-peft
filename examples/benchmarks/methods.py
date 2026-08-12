@@ -59,6 +59,7 @@ def extract_trainer_metrics(trainer: Trainer, train_result: Any) -> dict[str, An
 
     return {
         "log_history": log_history,
+        "completed_steps": int(trainer.state.global_step),
         "peak_memory_gb": peak_memory,
         "avg_time_per_step": avg_time_per_step,
         "eval_loss": eval_loss,
@@ -116,13 +117,17 @@ def train_lora(
         warmup_steps=warmup_steps,
         logging_steps=20,
         eval_strategy="steps",
-        eval_steps=100,
+        eval_steps=(
+            500 if getattr(args, "disable_early_stopping", False) else 100
+        ),
         report_to="wandb" if args.wandb else "none",
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         save_strategy="steps",
-        save_steps=100,
+        save_steps=(
+            1000 if getattr(args, "disable_early_stopping", False) else 100
+        ),
         save_total_limit=2,
-        load_best_model_at_end=True,
+        load_best_model_at_end=not getattr(args, "disable_early_stopping", False),
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         seed=args.seed,
@@ -136,13 +141,18 @@ def train_lora(
         if hasattr(training_args, k):
             setattr(training_args, k, v)
 
+    callbacks = (
+        []
+        if getattr(args, "disable_early_stopping", False)
+        else [EarlyStoppingCallback(early_stopping_patience=5)]
+    )
     trainer = EngramTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
+        callbacks=callbacks,
     )
 
     train_result = trainer.train()
@@ -229,7 +239,7 @@ def train_engram(
         save_strategy="steps",
         save_steps=100,
         save_total_limit=2,
-        load_best_model_at_end=True,
+        load_best_model_at_end=not getattr(args, "disable_early_stopping", False),
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         seed=args.seed,
@@ -248,19 +258,56 @@ def train_engram(
         )
     else:
         collator = EngramDataCollator(tokenizer=wash_tokenizer(tokenizer), config=config)
+    callbacks = (
+        []
+        if getattr(args, "disable_early_stopping", False)
+        else [EarlyStoppingCallback(early_stopping_patience=5)]
+    )
     trainer = EngramTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=collator,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
+        callbacks=callbacks,
     )
 
     train_result = trainer.train()
     metrics = extract_trainer_metrics(trainer, train_result)
+    metrics["planned_steps"] = int(args.max_steps)
+    metrics["processed_token_slots"] = int(
+        trainer.state.global_step
+        * args.batch_size
+        * args.grad_accum
+        * args.max_length
+    )
+    example_presentations = int(
+        trainer.state.global_step * args.batch_size * args.grad_accum
+    )
+    metrics["example_presentations"] = example_presentations
+    if len(train_dataset) > 0 and example_presentations % len(train_dataset) == 0:
+        repetitions = example_presentations // len(train_dataset)
+        non_padding_per_epoch = sum(
+            int(sum(example["attention_mask"])) for example in train_dataset
+        )
+        causal_targets_per_epoch = sum(
+            max(0, int(sum(example["attention_mask"])) - 1)
+            for example in train_dataset
+        )
+        metrics["full_dataset_repetitions"] = repetitions
+        metrics["non_padding_token_presentations"] = int(
+            non_padding_per_epoch * repetitions
+        )
+        metrics["causal_target_token_presentations"] = int(
+            causal_targets_per_epoch * repetitions
+        )
+    metrics["fixed_steps_complete"] = bool(
+        getattr(args, "disable_early_stopping", False)
+        and trainer.state.global_step == args.max_steps
+    )
 
-    # load_best_model_at_end has restored the best-eval_loss weights into `model`.
+    # Standard runs restore the best checkpoint. Fixed-step paper runs disable
+    # that path and deliberately save the exactly-max_steps final state.
     # Per-config save dir so a matrix (base x backend x seed) does not collide.
     save_dir = f"outputs/benchmarks/ckpt_{run_tag}"
     model.save_pretrained(save_dir)

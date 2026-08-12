@@ -138,6 +138,7 @@ class EngramConfig(PreTrainedConfig):
         default="arithmetic",
         metadata={
             "help": "Address backend: 'arithmetic' (original XOR-multiply hash), "
+            + "'arithmetic_fixed' (exact equal-K arithmetic control), "
             + "'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py), "
             + "'mixed' (per-head split: n_rq_levels_used RQ + n_arith_heads_per_ngram arith), "
             + "or 'mixed_v2' (separate RQ/arith branches fused by a token-level gate)."

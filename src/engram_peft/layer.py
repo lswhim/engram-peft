@@ -9,7 +9,7 @@ from jaxtyping import Float, Int64
 
 from engram_peft.compression import CompressedTokenizer
 from engram_peft.config import EngramConfig
-from engram_peft.hashing import NgramHashMapping
+from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
 from engram_peft.types import jaxtyped
 from engram_peft.utils import safe_from_numpy
 
@@ -316,7 +316,7 @@ class EngramLayer(nn.Module):
     hidden_dim: int
     total_embedding_dim: int
     embedding_dim_per_head: int
-    hash_mapping: NgramHashMapping
+    hash_mapping: FixedNgramHashMapping | NgramHashMapping
     multi_head_embedding: MultiHeadEmbedding
     gating: ContextAwareGating
     short_conv: ShortConv
@@ -379,7 +379,12 @@ class EngramLayer(nn.Module):
         assert config.compressed_vocab_size is not None
         assert mapped_pad_id is not None
 
-        self.hash_mapping = NgramHashMapping(
+        mapping_type = (
+            FixedNgramHashMapping
+            if config.hash_backend == "arithmetic_fixed"
+            else NgramHashMapping
+        )
+        self.hash_mapping = mapping_type(
             compressed_vocab_size=config.compressed_vocab_size,
             engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
             ngram_sizes=config.ngram_sizes,

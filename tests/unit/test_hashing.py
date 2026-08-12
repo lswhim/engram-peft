@@ -2,7 +2,31 @@ import numpy as np
 from scipy.stats import chisquare
 from sympy import isprime
 
-from engram_peft.hashing import NgramHashMapping
+from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
+
+
+def test_fixed_hash_has_exact_capacity_and_independent_heads() -> None:
+    mapping = FixedNgramHashMapping(
+        compressed_vocab_size=129280,
+        engram_vocab_size_per_ngram=[2048, 2048],
+        ngram_sizes=[2, 3],
+        n_head_per_ngram=8,
+        layer_ids=[1, 2],
+        pad_id=0,
+        seed=42,
+    )
+    assert all(
+        sizes == [256] * 8
+        for layer in mapping.prime_tables.values()
+        for sizes in layer
+    )
+    tokens = np.arange(128, dtype=np.int64).reshape(2, 64)
+    hashes = mapping.hash(tokens)
+    assert hashes[1].shape == (2, 64, 16)
+    assert int(hashes[1].min()) >= 0
+    assert int(hashes[1].max()) < 256
+    assert not np.array_equal(hashes[1][..., 0], hashes[1][..., 1])
+    assert not np.array_equal(hashes[1], hashes[2])
 
 
 def test_hash_table_sizes_are_prime() -> None:

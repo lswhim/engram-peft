@@ -89,7 +89,7 @@ class BenchmarkEngine:
         os.makedirs("outputs/benchmarks", exist_ok=True)
         log_path = os.path.join(
             "outputs/benchmarks",
-            f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+            f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.log",
         )
         sys.stdout = Logger(log_path)
         sys.stderr = sys.stdout
@@ -265,11 +265,9 @@ class BenchmarkEngine:
         if method_name != "base":
             self.is_dirty = True
 
-        # Cleanup tmp directory (checkpoints)
-        tmp_dir = "outputs/benchmarks/tmp"
-        if os.path.exists(tmp_dir):
-            print(f"Cleaning up temporary checkpoints in {tmp_dir}...")
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        # Do not remove the shared ``outputs/benchmarks/tmp`` root here.  Multiple
+        # paper methods run concurrently on independent GPUs; deleting the root at
+        # the end of one method can destroy another Trainer's checkpoints.
 
     def run_all(self, method_names: list[str]) -> None:
         for name in method_names:

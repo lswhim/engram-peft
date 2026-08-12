@@ -174,3 +174,102 @@ class NgramHashMapping:
             arr = np.array(input_ids)
 
         return self._get_ngram_indices(arr)
+
+
+@dataclass
+class FixedNgramHashMapping:
+    """Independent arithmetic heads with exactly equal table sizes.
+
+    The original Engram arithmetic mapping intentionally uses a different prime
+    modulus for every head.  It therefore cannot be parameter-matched exactly to
+    an RQ table with K rows in every head.  This controlled backend fixes every
+    head at ``total_capacity / n_head_per_ngram`` rows and obtains independence
+    through separate multiplier vectors instead of unequal moduli.
+    """
+
+    compressed_vocab_size: int
+    engram_vocab_size_per_ngram: list[int]
+    ngram_sizes: list[int]
+    layer_ids: list[int]
+    pad_id: int
+    n_head_per_ngram: int = 8
+    seed: int = 0
+
+    max_ngram_size: int = field(init=False)
+    table_sizes: list[int] = field(init=False)
+    prime_tables: dict[int, list[list[int]]] = field(init=False)
+    all_head_multipliers: dict[int, list[np.ndarray]] = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.compressed_vocab_size <= 0:
+            raise ValueError("compressed_vocab_size must be a positive integer")
+        if len(self.engram_vocab_size_per_ngram) != len(self.ngram_sizes):
+            raise ValueError("one total capacity is required per n-gram size")
+        self.max_ngram_size = max(self.ngram_sizes)
+        self.table_sizes = []
+        for total in self.engram_vocab_size_per_ngram:
+            if total <= 0 or total % self.n_head_per_ngram != 0:
+                raise ValueError(
+                    f"capacity {total} must be positive and divisible by "
+                    f"n_head_per_ngram={self.n_head_per_ngram}"
+                )
+            self.table_sizes.append(total // self.n_head_per_ngram)
+
+        # Keep the established attribute name because model/layer construction
+        # consumes it as generic per-head embedding table sizes.
+        self.prime_tables = {
+            layer_id: [
+                [self.table_sizes[index]] * self.n_head_per_ngram
+                for index in range(len(self.ngram_sizes))
+            ]
+            for layer_id in self.layer_ids
+        }
+        self.all_head_multipliers = {}
+        max_long = np.iinfo(np.int64).max
+        half_bound = max(1, int(max_long // self.compressed_vocab_size) // 2)
+        for layer_id in self.layer_ids:
+            per_order: list[np.ndarray] = []
+            for order_index, ngram_size in enumerate(self.ngram_sizes):
+                rng = np.random.default_rng(
+                    int(self.seed + 10_007 * layer_id + 1_000_003 * order_index)
+                )
+                values = rng.integers(
+                    0,
+                    half_bound,
+                    size=(self.n_head_per_ngram, ngram_size),
+                    dtype=np.int64,
+                )
+                per_order.append(values * 2 + 1)
+            self.all_head_multipliers[layer_id] = per_order
+
+    def hash(self, input_ids: torch.Tensor | np.ndarray) -> dict[int, np.ndarray]:
+        if isinstance(input_ids, torch.Tensor):
+            array = input_ids.detach().cpu().numpy()
+        else:
+            array = np.asarray(input_ids)
+        if array.ndim != 2:
+            raise ValueError(f"input_ids must have shape [batch, seq], got {array.shape}")
+
+        batch_size, sequence_length = array.shape
+        padding = np.full(
+            (batch_size, self.max_ngram_size - 1), self.pad_id, dtype=np.int64
+        )
+        padded = np.concatenate([padding, array.astype(np.int64)], axis=1)
+        cached: dict[int, np.ndarray] = {}
+        for ngram_size in set(self.ngram_sizes):
+            cached[ngram_size] = np.lib.stride_tricks.as_strided(
+                padded,
+                shape=(batch_size, sequence_length, ngram_size),
+                strides=padded.strides + (padded.strides[-1],),
+            )
+
+        outputs: dict[int, np.ndarray] = {}
+        for layer_id in self.layer_ids:
+            chunks: list[np.ndarray] = []
+            for order_index, ngram_size in enumerate(self.ngram_sizes):
+                ngrams = cached[ngram_size][..., np.newaxis, :]
+                multipliers = self.all_head_multipliers[layer_id][order_index]
+                mixed = np.bitwise_xor.reduce(ngrams * multipliers, axis=-1)
+                chunks.append(np.mod(mixed, self.table_sizes[order_index]))
+            outputs[layer_id] = np.concatenate(chunks, axis=-1)
+        return outputs
