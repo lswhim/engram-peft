@@ -175,10 +175,23 @@ def active_experiments() -> list[dict[str, Any]]:
                 if isinstance(languages, dict)
                 else 0
             )
+            latest_result = ""
+            if isinstance(languages, dict):
+                language_keys = [key for key in languages if key != "macro"]
+                if language_keys:
+                    latest_language = language_keys[-1]
+                    latest_accuracy = languages.get(latest_language)
+                    if isinstance(latest_accuracy, int | float):
+                        latest_result = (
+                            f"；{latest_language}={100.0 * latest_accuracy:.2f}"
+                        )
             if status == "complete":
                 phase = f"完成（{completed_languages}/{expected_languages} 语言）"
             elif status == "evaluating":
-                phase = f"评测中（{completed_languages}/{expected_languages} 语言）"
+                phase = (
+                    f"评测中（{completed_languages}/{expected_languages} "
+                    f"语言{latest_result}）"
+                )
             else:
                 phase = "训练中"
         key = (gpu, script, method, seed)
