@@ -733,7 +733,10 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
             else:
                 items.append("Gate 1 单 seed 尚不支持核心假设：Semantic-RQ 未同时击败两个决定性对照；不得扩写正向结论。")
     else:
-        items.append("Gate 1 尚未形成三角对照，当前状态只说明实验在运行，不构成论文结论。")
+        items.append(
+            "Gate 1 尚未形成三角对照；表中运行时 eval loss 只用于健康监控。"
+            "各 run 当前 step 不同，不能横向比较，也不构成论文结论。"
+        )
     slices = snapshot.get("lm_slices", {})
     slice_triad = {
         name: slices.get(f"{name}_seed42", {})
