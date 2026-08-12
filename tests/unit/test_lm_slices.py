@@ -87,6 +87,29 @@ def test_paired_document_statistics_preserve_sign() -> None:
     assert counts.tolist() == [1, 2]
 
 
+def test_interaction_bootstrap_preserves_shared_minus_no_shared_sign() -> None:
+    shared = [
+        (
+            np.asarray([-2.0, -2.0, -2.0]),
+            np.asarray([1, 1, 1]),
+        )
+    ]
+    no_shared = [
+        (
+            np.asarray([-0.5, -0.5, -0.5]),
+            np.asarray([1, 1, 1]),
+        )
+    ]
+    result = _ANALYSIS.bootstrap_interaction(
+        shared,
+        no_shared,
+        replicates=100,
+        rng=np.random.default_rng(7),
+    )
+    assert result["delta_nll_interaction"] == -1.5
+    assert result["ci95"] == [-1.5, -1.5]
+
+
 def test_crosslingual_access_counts_use_only_valid_covered_positions() -> None:
     compressed = np.asarray([[1, 2, 3, 4, 0]], dtype=np.int64)
     attention = np.asarray([[1, 1, 1, 1, 0]], dtype=np.uint8)

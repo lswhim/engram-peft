@@ -67,6 +67,67 @@ def bootstrap(
     }
 
 
+def bootstrap_interaction(
+    left: list[tuple[np.ndarray, np.ndarray]],
+    right: list[tuple[np.ndarray, np.ndarray]],
+    replicates: int,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    """Bootstrap a difference of slice-wise mean treatment effects.
+
+    ``left`` and ``right`` contain document sums/counts for the same seeds and
+    documents.  Negative means the Semantic-RQ advantage is stronger on the
+    left slice.  Seed and document indices are shared within each replicate so
+    this is an interaction, not a comparison of unrelated marginal CIs.
+    """
+    if len(left) != len(right) or not left:
+        raise ValueError("interaction inputs must have the same non-zero seed count")
+    for (left_values, _), (right_values, _) in zip(left, right, strict=True):
+        if len(left_values) != len(right_values):
+            raise ValueError("interaction slices must be aligned by document")
+
+    left_sum = sum(float(values.sum()) for values, _ in left)
+    left_count = sum(int(counts.sum()) for _, counts in left)
+    right_sum = sum(float(values.sum()) for values, _ in right)
+    right_count = sum(int(counts.sum()) for _, counts in right)
+    if not left_count or not right_count:
+        return {
+            "left_tokens": left_count,
+            "right_tokens": right_count,
+            "delta_nll_interaction": None,
+            "ci95": [None, None],
+        }
+
+    draws = np.empty(replicates, dtype=np.float64)
+    seed_count = len(left)
+    for draw in range(replicates):
+        left_total = right_total = 0.0
+        left_n = right_n = 0
+        for seed_index in rng.integers(0, seed_count, size=seed_count):
+            left_values, left_counts = left[int(seed_index)]
+            right_values, right_counts = right[int(seed_index)]
+            documents = rng.integers(0, len(left_values), size=len(left_values))
+            left_total += float(left_values[documents].sum())
+            left_n += int(left_counts[documents].sum())
+            right_total += float(right_values[documents].sum())
+            right_n += int(right_counts[documents].sum())
+        draws[draw] = (
+            left_total / left_n - right_total / right_n
+            if left_n and right_n
+            else np.nan
+        )
+    finite = draws[np.isfinite(draws)]
+    lower, upper = np.quantile(finite, [0.025, 0.975])
+    return {
+        "left_tokens": left_count,
+        "right_tokens": right_count,
+        "delta_nll_interaction": left_sum / left_count - right_sum / right_count,
+        "ci95": [float(lower), float(upper)],
+        "bootstrap_unit": "document nested within resampled seed",
+        "replicates": replicates,
+    }
+
+
 def main() -> None:
     args = parse_args()
     rng = np.random.default_rng(args.seed)
@@ -135,6 +196,20 @@ def main() -> None:
             values, args.replicates, rng
         )
 
+    interactions: dict[str, Any] = {name: {} for name in comparisons}
+    for control_name in comparisons:
+        for order in (2, 3):
+            left_name = f"{order}gram_semantic_neighbor_shared_code"
+            right_name = f"{order}gram_semantic_neighbor_no_shared_code"
+            interactions[control_name][f"{order}gram_shared_minus_no_shared"] = (
+                bootstrap_interaction(
+                    stores[(control_name, left_name)],
+                    stores[(control_name, right_name)],
+                    args.replicates,
+                    rng,
+                )
+            )
+
     payload = {
         "status": "complete",
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -142,6 +217,7 @@ def main() -> None:
         "seeds": list(seeds),
         "per_seed": per_seed_results,
         "aggregate": aggregate,
+        "interactions": interactions,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")

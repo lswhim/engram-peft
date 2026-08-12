@@ -75,21 +75,77 @@ def gate_decision(payload: dict[str, Any]) -> dict[str, Any]:
     primary_name = "3gram_semantic_neighbor_shared_code"
     primary = {control: ci(payload, control, primary_name) for control in METHODS[:2]}
     overall = {control: ci(payload, control, "overall") for control in METHODS[:2]}
+    interactions = {
+        control: payload.get("interactions", {})
+        .get(control, {})
+        .get("3gram_shared_minus_no_shared", {})
+        .get("ci95")
+        for control in METHODS[:2]
+    }
+    if any(
+        not (
+            isinstance(value, list)
+            and len(value) == 2
+            and all(isinstance(item, int | float) for item in value)
+        )
+        for value in interactions.values()
+    ):
+        return {"status": "failed", "reason": "required shared/no-shared interaction CI is missing"}
     if any(value is None for value in (*primary.values(), *overall.values())):
         return {"status": "failed", "reason": "required Gate-1 CI is missing"}
     primary_pass = all(value is not None and value[1] < 0 for value in primary.values())
+    interaction_pass = all(value[1] < 0 for value in interactions.values())
     # Delta is Semantic-RQ minus control; a lower CI bound > 0 would prove regression.
     overall_safe = all(value is not None and value[0] <= 0 for value in overall.values())
+    seed_directions: dict[str, list[bool]] = {}
+    for control in METHODS[:2]:
+        seed_directions[control] = [
+            bool(
+                payload.get("per_seed", {})
+                .get(str(seed), {})
+                .get(control, {})
+                .get(primary_name, {})
+                .get("delta_nll", float("inf"))
+                < 0
+            )
+            for seed in SEEDS
+        ]
+    seed_consistent = all(sum(values) >= 2 for values in seed_directions.values())
+    false_sharing = {
+        control: {
+            name: payload.get("aggregate", {}).get(control, {}).get(name, {})
+            for name in (
+                "2gram_covered_no_neighbor_high_lexical",
+                "3gram_covered_no_neighbor_high_lexical",
+            )
+        }
+        for control in METHODS[:2]
+    }
     return {
-        "status": "pass" if primary_pass and overall_safe else "no_go",
+        "status": (
+            "pass"
+            if primary_pass and interaction_pass and overall_safe and seed_consistent
+            else "no_go"
+        ),
         "primary": primary,
         "overall": overall,
+        "interactions": interactions,
+        "seed_directions": seed_directions,
+        "false_sharing_proxy": false_sharing,
+        "false_sharing_status": (
+            "underpowered in Gate-1; mandatory PAWS-X matched triad remains queued"
+        ),
         "criteria": {
             "primary": "both 95% CI upper bounds < 0",
+            "interaction": "shared-minus-no-shared 95% CI upper bound < 0 for both controls",
             "overall_safety": "neither 95% CI lower bound > 0",
+            "seed_consistency": "negative primary delta in at least 2/3 seeds for both controls",
+            "false_sharing": "not inferred from tiny proxy slices; resolved by PAWS-X",
         },
         "primary_pass": primary_pass,
+        "interaction_pass": interaction_pass,
         "overall_safe": overall_safe,
+        "seed_consistent": seed_consistent,
     }
 
 
