@@ -140,6 +140,17 @@ def active_experiments() -> list[dict[str, Any]]:
             if script == "analyze_rq_addresses.py"
             else "—"
         )
+        run_suffix = suffix_match.group(1) if suffix_match else None
+        if run_suffix:
+            for pattern in (
+                r"_paper_gate1_fineweb_100m_fixedsteps_(.+)_seed\d+",
+                r"_paper_phase2_fineweb_onepass_fixedsteps_(.+)_seed\d+",
+                r"_paper_capacity_k(?:64|1024)_fixedsteps_(.+)_seed42",
+            ):
+                suffix_method = re.fullmatch(pattern, run_suffix)
+                if suffix_method:
+                    method = suffix_method.group(1)
+                    break
         seed = seed_match.group(1) if seed_match else "—"
         key = (gpu, script, method, seed)
         pid = int(entry.name)
@@ -151,7 +162,7 @@ def active_experiments() -> list[dict[str, Any]]:
                 "script": script,
                 "method": method,
                 "seed": seed,
-                "run_suffix": suffix_match.group(1) if suffix_match else None,
+                "run_suffix": run_suffix,
             }
     return sorted(found.values(), key=lambda row: (str(row["gpu"]), row["pid"]))
 
