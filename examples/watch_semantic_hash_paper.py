@@ -158,6 +158,15 @@ def active_experiments() -> list[dict[str, Any]]:
         seed = seed_match.group(1) if seed_match else "—"
         key = (gpu, script, method, seed)
         pid = int(entry.name)
+        progress: dict[str, Any] = {}
+        log_path: str | None = None
+        try:
+            stdout_path = (entry / "fd" / "1").resolve(strict=True)
+            if stdout_path.is_file():
+                log_path = str(stdout_path)
+                progress = log_progress(stdout_path)
+        except OSError:
+            pass
         previous = found.get(key)
         if previous is None or pid < previous["pid"]:
             found[key] = {
@@ -167,6 +176,8 @@ def active_experiments() -> list[dict[str, Any]]:
                 "method": method,
                 "seed": seed,
                 "run_suffix": run_suffix,
+                "log": log_path,
+                "progress": progress,
             }
     return sorted(found.values(), key=lambda row: (str(row["gpu"]), row["pid"]))
 
@@ -545,6 +556,16 @@ def task_key(name: str, seed: int) -> str:
     return f"gate1_{name}" if seed == 42 else f"gate1_{name}_seed{seed}"
 
 
+def active_gate_job(
+    name: str, snapshot: dict[str, Any], seed: int
+) -> dict[str, Any] | None:
+    suffix = f"_paper_gate1_fineweb_100m_fixedsteps_{name}_seed{seed}"
+    for job in snapshot.get("active_jobs", []):
+        if isinstance(job, dict) and job.get("run_suffix") == suffix:
+            return job
+    return None
+
+
 def is_fixedstep_entry(entry: object) -> bool:
     if not isinstance(entry, dict):
         return False
@@ -568,10 +589,19 @@ def status_for(name: str, snapshot: dict[str, Any], seed: int = 42) -> str:
         return f'<span class="pill run">GPU {entry.get("gpu", "?")} 训练中{suffix}</span>'
     if is_fixedstep_entry(entry) and entry.get("return_code") not in (None, 0):
         return '<span class="pill fail">失败，等待诊断</span>'
-    suffix = f"_paper_gate1_fineweb_100m_fixedsteps_{name}_seed{seed}"
-    for job in snapshot.get("active_jobs", []):
-        if isinstance(job, dict) and job.get("run_suffix") == suffix:
-            return f'<span class="pill run">GPU {job.get("gpu", "?")} 训练中（外部接管）</span>'
+    job = active_gate_job(name, snapshot, seed)
+    if job is not None:
+        progress = job.get("progress", {})
+        suffix = ""
+        if isinstance(progress, dict) and isinstance(progress.get("step"), int):
+            suffix = (
+                f' · {progress["percent"]}% '
+                f'({progress["step"]}/{progress["total_steps"]})'
+            )
+        return (
+            f'<span class="pill run">GPU {job.get("gpu", "?")} '
+            f'训练中（外部接管）{suffix}</span>'
+        )
     return '<span class="pill wait">等待依赖/空卡</span>'
 
 
@@ -867,6 +897,9 @@ def render(snapshot: dict[str, Any]) -> str:
         if not is_fixedstep_entry(active):
             active = {}
         progress = active.get("progress", {}) if isinstance(active, dict) else {}
+        if not progress:
+            job = active_gate_job(name, snapshot, 42)
+            progress = job.get("progress", {}) if isinstance(job, dict) else {}
         latest_loss = progress.get("loss") if isinstance(progress, dict) else None
         gate_rows.append(
             f"<tr><th>{labels[name]}</th><td>{status_for(name, snapshot)}</td>"
@@ -1205,15 +1238,22 @@ def render(snapshot: dict[str, Any]) -> str:
         )
     conclusion_html = "".join(f"<li>{html.escape(item)}</li>" for item in conclusions(snapshot))
     active_rows = "".join(
-        f'<tr><th>GPU {html.escape(str(job["gpu"]))}</th><td>{html.escape(job["script"])}</td><td>{html.escape(job["method"])}</td><td>{html.escape(str(job["seed"]))}</td><td>{job["pid"]}</td></tr>'
+        f'<tr><th>GPU {html.escape(str(job["gpu"]))}</th>'
+        f'<td>{html.escape(job["script"])}</td>'
+        f'<td>{html.escape(job["method"])}</td>'
+        f'<td>{html.escape(str(job["seed"]))}</td>'
+        f'<td>{fmt(job.get("progress", {}).get("step"), 0)}/'
+        f'{fmt(job.get("progress", {}).get("total_steps"), 0)}</td>'
+        f'<td>{fmt(job.get("progress", {}).get("loss"))}</td>'
+        f'<td>{job["pid"]}</td></tr>'
         for job in snapshot["active_jobs"]
-    ) or '<tr><td colspan="5">没有检测到实验进程</td></tr>'
+    ) or '<tr><td colspan="7">没有检测到实验进程</td></tr>'
     refresh = "" if snapshot["all_complete"] else '<meta http-equiv="refresh" content="15">'
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">{refresh}
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic-RQ Paper Lab</title>
 <style>:root{{--bg:#071018;--panel:#0d1c28;--line:#20394a;--text:#edf7fb;--muted:#8eabb9;--cyan:#52d6df;--green:#55d69e;--amber:#ffc66d;--red:#ff7185}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 15% 0,#11364b,transparent 32%),var(--bg);color:var(--text);font:14px/1.5 system-ui,"PingFang SC",sans-serif}}main{{max-width:1450px;margin:auto;padding:34px 24px 70px}}h1{{margin:0;font-size:34px}}.lead{{color:var(--muted);margin:5px 0 22px}}h2{{margin:32px 0 12px}}.gpus{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column}}.card span{{color:var(--muted)}}.card strong{{font-size:25px;color:var(--cyan)}}.box{{background:rgba(13,28,40,.94);border:1px solid var(--line);border-radius:14px;overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:820px}}th,td{{padding:12px 14px;border-bottom:1px solid var(--line);text-align:right}}th:first-child{{text-align:left}}thead th{{color:var(--muted)}}.pill{{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700}}.done{{color:var(--green);background:#55d69e22}}.run{{color:var(--cyan);background:#52d6df22}}.wait{{color:var(--amber);background:#ffc66d20}}.fail{{color:var(--red);background:#ff718522}}.invalid{{color:#748b96;text-decoration:line-through}}.conclusions{{background:#0c2030;border-left:4px solid var(--cyan);padding:14px 20px;border-radius:8px}}li{{margin:8px 0}}code{{color:var(--cyan)}}@media(max-width:800px){{.gpus{{grid-template-columns:repeat(2,1fr)}}}}</style></head>
 <body><main><h1>Semantic-RQ Paper Lab</h1><div class="lead">Gate 0 地址诊断 → Gate 1 受控语言建模 → One-pass → Capacity → 外部验证 · 更新于 {html.escape(snapshot['updated_at'])}</div>
-<div class="gpus">{gpu_cards}</div><h2>当前运行任务</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>主 PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
+<div class="gpus">{gpu_cards}</div><h2>当前运行任务</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>Step</th><th>Train loss</th><th>主 PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
 <h2>Gate 0 · 地址结构诊断</h2><div class="box"><table><thead><tr><th>Order</th><th>ρ(语义, RQ overlap)</th><th>ρ(语义, Shuffled)</th><th>低词面高语义 RQ overlap</th><th>Shuffled overlap</th><th>Held-out coverage</th><th>切片 pairs</th></tr></thead><tbody>{''.join(diagnostic_rows)}</tbody></table></div>
 <h2>主对照 · Frequency-matched RQ-Shuffled 审计</h2><div class="box"><table><thead><tr><th>Seed / Order</th><th>全表 moved</th><th>已访问 rows moved</th><th>行数 histogram</th><th>访问加权 histogram</th><th>同频 singleton rows</th></tr></thead><tbody>{''.join(shuffle_rows)}</tbody></table></div>
 <h2>公平容量审计</h2><div class="box"><table><thead><tr><th>地址方法</th><th>Layer 11 · 2gram</th><th>Layer 11 · 3gram</th><th>Layer 21 · 2gram</th><th>Layer 21 · 3gram</th><th>可训练参数</th><th>主表资格</th></tr></thead><tbody>
