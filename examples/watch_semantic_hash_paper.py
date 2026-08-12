@@ -129,6 +129,7 @@ def active_experiments() -> list[dict[str, Any]]:
         method_match = re.search(r"--method(?:s)?\s+([^\s]+)", command)
         seed_match = re.search(r"--seed\s+(\d+)", command)
         suffix_match = re.search(r"--run_suffix\s+([^\s]+)", command)
+        output_match = re.search(r"--output_dir\s+([^\s]+)", command)
         method = method_match.group(1).split(":", 1)[0] if method_match else (
             "semantic-rq table"
             if script == "build_rq_table.py"
@@ -156,6 +157,30 @@ def active_experiments() -> list[dict[str, Any]]:
                     method = suffix_method.group(1)
                     break
         seed = seed_match.group(1) if seed_match else "—"
+        phase = "运行中"
+        if script in {"run_xtreme_xnli.py", "run_xtreme_pawsx.py"}:
+            expected_languages = 15 if script == "run_xtreme_xnli.py" else 7
+            metrics_path = None
+            if output_match and seed != "—":
+                metrics_path = (
+                    Path(output_match.group(1))
+                    / f"{method}_seed{seed}"
+                    / "metrics.json"
+                )
+            metrics = read_json(metrics_path) if metrics_path is not None else {}
+            status = metrics.get("status")
+            languages = metrics.get("languages")
+            completed_languages = (
+                sum(key != "macro" for key in languages)
+                if isinstance(languages, dict)
+                else 0
+            )
+            if status == "complete":
+                phase = f"完成（{completed_languages}/{expected_languages} 语言）"
+            elif status == "evaluating":
+                phase = f"评测中（{completed_languages}/{expected_languages} 语言）"
+            else:
+                phase = "训练中"
         key = (gpu, script, method, seed)
         pid = int(entry.name)
         progress: dict[str, Any] = {}
@@ -176,6 +201,7 @@ def active_experiments() -> list[dict[str, Any]]:
                 "method": method,
                 "seed": seed,
                 "run_suffix": run_suffix,
+                "phase": phase,
                 "log": log_path,
                 "progress": progress,
             }
@@ -1242,18 +1268,19 @@ def render(snapshot: dict[str, Any]) -> str:
         f'<td>{html.escape(job["script"])}</td>'
         f'<td>{html.escape(job["method"])}</td>'
         f'<td>{html.escape(str(job["seed"]))}</td>'
+        f'<td>{html.escape(str(job.get("phase", "运行中")))}</td>'
         f'<td>{fmt(job.get("progress", {}).get("step"), 0)}/'
         f'{fmt(job.get("progress", {}).get("total_steps"), 0)}</td>'
         f'<td>{fmt(job.get("progress", {}).get("loss"))}</td>'
         f'<td>{job["pid"]}</td></tr>'
         for job in snapshot["active_jobs"]
-    ) or '<tr><td colspan="7">没有检测到实验进程</td></tr>'
+    ) or '<tr><td colspan="8">没有检测到实验进程</td></tr>'
     refresh = "" if snapshot["all_complete"] else '<meta http-equiv="refresh" content="15">'
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">{refresh}
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic-RQ Paper Lab</title>
 <style>:root{{--bg:#071018;--panel:#0d1c28;--line:#20394a;--text:#edf7fb;--muted:#8eabb9;--cyan:#52d6df;--green:#55d69e;--amber:#ffc66d;--red:#ff7185}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 15% 0,#11364b,transparent 32%),var(--bg);color:var(--text);font:14px/1.5 system-ui,"PingFang SC",sans-serif}}main{{max-width:1450px;margin:auto;padding:34px 24px 70px}}h1{{margin:0;font-size:34px}}.lead{{color:var(--muted);margin:5px 0 22px}}h2{{margin:32px 0 12px}}.gpus{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column}}.card span{{color:var(--muted)}}.card strong{{font-size:25px;color:var(--cyan)}}.box{{background:rgba(13,28,40,.94);border:1px solid var(--line);border-radius:14px;overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:820px}}th,td{{padding:12px 14px;border-bottom:1px solid var(--line);text-align:right}}th:first-child{{text-align:left}}thead th{{color:var(--muted)}}.pill{{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700}}.done{{color:var(--green);background:#55d69e22}}.run{{color:var(--cyan);background:#52d6df22}}.wait{{color:var(--amber);background:#ffc66d20}}.fail{{color:var(--red);background:#ff718522}}.invalid{{color:#748b96;text-decoration:line-through}}.conclusions{{background:#0c2030;border-left:4px solid var(--cyan);padding:14px 20px;border-radius:8px}}li{{margin:8px 0}}code{{color:var(--cyan)}}@media(max-width:800px){{.gpus{{grid-template-columns:repeat(2,1fr)}}}}</style></head>
 <body><main><h1>Semantic-RQ Paper Lab</h1><div class="lead">Gate 0 地址诊断 → Gate 1 受控语言建模 → One-pass → Capacity → 外部验证 · 更新于 {html.escape(snapshot['updated_at'])}</div>
-<div class="gpus">{gpu_cards}</div><h2>当前运行任务</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>Step</th><th>Train loss</th><th>主 PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
+<div class="gpus">{gpu_cards}</div><h2>当前运行任务</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>阶段</th><th>Step</th><th>Train loss</th><th>主 PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
 <h2>Gate 0 · 地址结构诊断</h2><div class="box"><table><thead><tr><th>Order</th><th>ρ(语义, RQ overlap)</th><th>ρ(语义, Shuffled)</th><th>低词面高语义 RQ overlap</th><th>Shuffled overlap</th><th>Held-out coverage</th><th>切片 pairs</th></tr></thead><tbody>{''.join(diagnostic_rows)}</tbody></table></div>
 <h2>主对照 · Frequency-matched RQ-Shuffled 审计</h2><div class="box"><table><thead><tr><th>Seed / Order</th><th>全表 moved</th><th>已访问 rows moved</th><th>行数 histogram</th><th>访问加权 histogram</th><th>同频 singleton rows</th></tr></thead><tbody>{''.join(shuffle_rows)}</tbody></table></div>
 <h2>公平容量审计</h2><div class="box"><table><thead><tr><th>地址方法</th><th>Layer 11 · 2gram</th><th>Layer 11 · 3gram</th><th>Layer 21 · 2gram</th><th>Layer 21 · 3gram</th><th>可训练参数</th><th>主表资格</th></tr></thead><tbody>
