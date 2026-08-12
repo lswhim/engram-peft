@@ -48,6 +48,9 @@ def log_progress(path: Path) -> dict[str, Any]:
         return {}
     steps = list(re.finditer(r"(\d{1,3})%\|[^\r\n]*?\|\s*(\d+)/(\d+)", content))
     losses = list(re.finditer(r"['\"]loss['\"]:\s*([0-9.eE+-]+)", content))
+    eval_losses = list(
+        re.finditer(r"['\"]eval_loss['\"]:\s*([0-9.eE+-]+)", content)
+    )
     progress: dict[str, Any] = {}
     if steps:
         match = steps[-1]
@@ -58,6 +61,8 @@ def log_progress(path: Path) -> dict[str, Any]:
         )
     if losses:
         progress["loss"] = float(losses[-1].group(1))
+    if eval_losses:
+        progress["eval_loss"] = float(eval_losses[-1].group(1))
     return progress
 
 
@@ -605,6 +610,20 @@ def active_gate_job(
     return None
 
 
+def gate_progress(
+    name: str, snapshot: dict[str, Any], seed: int
+) -> dict[str, Any]:
+    running = snapshot.get("pipeline", {}).get("running", {})
+    entry = running.get(task_key(name, seed)) if isinstance(running, dict) else None
+    if is_fixedstep_entry(entry) and "return_code" not in entry:
+        progress = entry.get("progress")
+        if isinstance(progress, dict):
+            return progress
+    job = active_gate_job(name, snapshot, seed)
+    progress = job.get("progress") if isinstance(job, dict) else None
+    return progress if isinstance(progress, dict) else {}
+
+
 def is_fixedstep_entry(entry: object) -> bool:
     if not isinstance(entry, dict):
         return False
@@ -931,18 +950,14 @@ def render(snapshot: dict[str, Any]) -> str:
     for name in GATE1:
         payload = snapshot["gate1"].get(name, {})
         metrics = payload.get("metrics", {}) if isinstance(payload, dict) else {}
-        running = snapshot["pipeline"].get("running", {})
-        active = running.get(f"gate1_{name}", {}) if isinstance(running, dict) else {}
-        if not is_fixedstep_entry(active):
-            active = {}
-        progress = active.get("progress", {}) if isinstance(active, dict) else {}
-        if not progress:
-            job = active_gate_job(name, snapshot, 42)
-            progress = job.get("progress", {}) if isinstance(job, dict) else {}
+        progress = gate_progress(name, snapshot, 42)
         latest_loss = progress.get("loss") if isinstance(progress, dict) else None
+        eval_loss = metrics.get("eval_loss")
+        if eval_loss is None and isinstance(progress, dict):
+            eval_loss = progress.get("eval_loss")
         gate_rows.append(
             f"<tr><th>{labels[name]}</th><td>{status_for(name, snapshot)}</td>"
-            f"<td>{fmt(latest_loss)}</td><td>{fmt(metrics.get('eval_loss'))}</td><td>{fmt(metrics.get('peak_memory_gb'), 2)}</td>"
+            f"<td>{fmt(latest_loss)}</td><td>{fmt(eval_loss)}</td><td>{fmt(metrics.get('peak_memory_gb'), 2)}</td>"
             f"<td>{fmt(metrics.get('avg_time_per_step'), 3)}</td>"
             f"<td>{fmt(metrics.get('causal_target_token_presentations'), 0)}</td></tr>"
         )
@@ -953,9 +968,15 @@ def render(snapshot: dict[str, Any]) -> str:
             payload = snapshot["gate1_all"].get(f"{name}_seed{seed}", {})
             metrics = payload.get("metrics", {}) if isinstance(payload, dict) else {}
             eval_loss = metrics.get("eval_loss") if isinstance(metrics, dict) else None
+            progress = gate_progress(name, snapshot, seed)
+            if eval_loss is None:
+                eval_loss = progress.get("eval_loss")
+            completed_steps = metrics.get("completed_steps")
+            if completed_steps is None:
+                completed_steps = progress.get("step", "—")
             cells.append(
                 f"<td>{status_for(name, snapshot, seed)}<br><span class='lead'>eval {fmt(eval_loss)} · "
-                f"steps {metrics.get('completed_steps', '—')}/12208</span></td>"
+                f"steps {completed_steps}/12208</span></td>"
             )
         replication_rows.append(f"<tr><th>{labels[name]}</th>{''.join(cells)}</tr>")
     legacy_rows = []
@@ -1300,7 +1321,7 @@ def render(snapshot: dict[str, Any]) -> str:
 <tr><th>Semantic-RQ (M8,K256)</th><td>2048</td><td>2048</td><td>2048</td><td>2048</td><td>26,984,448</td><td><span class="pill done">是</span></td></tr>
 <tr><th>Arithmetic-fixed (8×256)</th><td>2048</td><td>2048</td><td>2048</td><td>2048</td><td>26,984,448</td><td><span class="pill done">是</span></td></tr>
 <tr><th>Legacy prime arithmetic</th><td>2194</td><td>2612</td><td>3000</td><td>3396</td><td>不匹配</td><td><span class="pill fail">否</span></td></tr>
-</tbody></table></div><h2>Gate 1 · FineWeb-Edu 100M processed-token-slot fixedsteps（Seed 42）</h2><div class="box"><table><thead><tr><th>方法</th><th>状态</th><th>最近 train loss</th><th>Eval loss ↓</th><th>峰值显存 GB</th><th>秒/step</th><th>实际 causal targets</th></tr></thead><tbody>{''.join(gate_rows)}</tbody></table></div>
+</tbody></table></div><h2>Gate 1 · FineWeb-Edu 100M processed-token-slot fixedsteps（Seed 42）</h2><div class="box"><table><thead><tr><th>方法</th><th>状态</th><th>最近 train loss</th><th>中间/最终 Eval loss ↓</th><th>峰值显存 GB</th><th>秒/step</th><th>实际 causal targets</th></tr></thead><tbody>{''.join(gate_rows)}</tbody></table></div>
 <h2>旧 Early-stop 诊断（不进入主表）</h2><div class="box"><table><thead><tr><th>方法</th><th>状态</th><th>实际 steps</th><th>Eval loss</th></tr></thead><tbody>{''.join(legacy_rows)}</tbody></table></div>
 <h2>Gate 1 · 三 Seed 复现矩阵（完成 {snapshot['complete_gate1_total']}/12）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(replication_rows)}</tbody></table></div>
 <h2>LM 因果切片 Manifest · 2,000 held-out rows（完成 {snapshot['complete_slice_manifests']}/3）</h2><div class="box"><table><thead><tr><th>数据切分</th><th>状态</th><th>2g exact</th><th>2g semantic</th><th>2g covered/no-neighbor</th><th>2g OOV</th><th>3g exact</th><th>3g semantic</th><th>3g covered/no-neighbor</th><th>3g OOV</th></tr></thead><tbody>{''.join(manifest_rows)}</tbody></table></div>
