@@ -13,9 +13,12 @@ from pathlib import Path
 
 SCHEDULE = {
     0: ("lora", ["lora"]),
-    1: ("arithmetic_matched", ["arithmetic_matched", "arithmetic"]),
+    1: ("arithmetic_matched", ["arithmetic_matched"]),
     2: ("full_ft", ["full_ft"]),
-    3: ("rq", ["base", "rq"]),
+    # XNLI arithmetic is already complete by the time this relay starts, so
+    # keep GPU 3 busy after the short base/RQ jobs instead of waiting for the
+    # much longer arithmetic_matched gate on GPU 1.
+    3: ("rq", ["base", "rq", "arithmetic"]),
 }
 
 
