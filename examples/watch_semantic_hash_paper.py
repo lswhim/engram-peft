@@ -7,6 +7,7 @@ import html
 import json
 import os
 import re
+import statistics
 import subprocess
 import time
 from datetime import datetime
@@ -92,6 +93,7 @@ def active_experiments() -> list[dict[str, Any]]:
     target_scripts = {
         "build_rq_table.py",
         "build_lm_slice_manifest.py",
+        "build_crosslingual_access_counts.py",
         "shuffle_rq_table.py",
         "analyze_rq_addresses.py",
         "analyze_lm_slice_results.py",
@@ -132,6 +134,8 @@ def active_experiments() -> list[dict[str, Any]]:
             if script == "build_rq_table.py"
             else "slice manifest"
             if script == "build_lm_slice_manifest.py"
+            else "crosslingual access audit"
+            if script == "build_crosslingual_access_counts.py"
             else "frequency-matched shuffle"
             if script == "shuffle_rq_table.py"
             else "paired bootstrap"
@@ -263,6 +267,23 @@ def external_result(benchmark: str, method: str, seed: int, corrected: bool = Fa
     return read_json(root / f"{method}_seed{seed}" / "metrics.json")
 
 
+def external_triad_result(
+    benchmark: str, variant: str, seed: int
+) -> dict[str, Any]:
+    if variant == "semantic_rq":
+        root = Path(f"outputs/xtreme_{benchmark}_v1")
+        method = "rq"
+    elif variant == "arithmetic_matched":
+        root = Path(f"outputs/xtreme_{benchmark}_matched_exact")
+        method = variant
+    elif variant == "rq_shuffled":
+        root = Path(f"outputs/xtreme_{benchmark}_rq_shuffled_freqmatched")
+        method = "rq"
+    else:
+        raise ValueError(f"unknown external variant: {variant}")
+    return read_json(root / f"{method}_seed{seed}" / "metrics.json")
+
+
 def macro(payload: dict[str, Any]) -> float | None:
     languages = payload.get("languages")
     value = languages.get("macro") if isinstance(languages, dict) else None
@@ -360,7 +381,30 @@ def collect(output_dir: Path) -> dict[str, Any]:
             "corrected_matched_seed42": macro(external_result(benchmark, "arithmetic_matched", 42, corrected=True)),
             "rq_seed43": macro(external_result(benchmark, "rq", 43)),
             "corrected_matched_seed43": macro(external_result(benchmark, "arithmetic_matched", 43, corrected=True)),
+            "triad": {
+                variant: {
+                    str(seed): macro(external_triad_result(benchmark, variant, seed))
+                    for seed in GATE1_SEEDS
+                }
+                for variant in STANDARD_METHODS
+            },
         }
+    external_root = output_dir / "external_matched"
+    external_pipeline = read_json(external_root / "pipeline_state.json")
+    external_access = {
+        benchmark: read_json(external_root / benchmark / "access_counts.json")
+        for benchmark in ("xnli", "pawsx")
+    }
+    external_shuffles = {
+        f"{benchmark}_seed{seed}": read_json(
+            Path(
+                "rq_tables/wiki15_qwen3_06b_M8K256_500k_"
+                f"{benchmark}_shuffled_freqmatched_seed{seed}/shuffle_manifest.json"
+            )
+        )
+        for benchmark in ("xnli", "pawsx")
+        for seed in GATE1_SEEDS
+    }
     complete_gate1 = sum(name in gate1 for name in GATE1)
     complete_gate1_total = sum(
         f"{name}_seed{seed}" in gate1_all
@@ -403,6 +447,24 @@ def collect(output_dir: Path) -> dict[str, Any]:
         and capacity_comparison.get("status") == "complete"
         and len(capacity_gate1) == 2 * len(STANDARD_METHODS)
     )
+    external_complete = (
+        external_pipeline.get("note") == "all external triads complete"
+        and all(
+            external_access[benchmark].get("status") == "complete"
+            for benchmark in ("xnli", "pawsx")
+        )
+        and all(
+            payload.get("status") == "complete"
+            for benchmark in ("xnli", "pawsx")
+            for variant in STANDARD_METHODS
+            for seed in GATE1_SEEDS
+            for payload in [external_triad_result(benchmark, variant, seed)]
+        )
+        and all(
+            payload.get("status") == "complete"
+            for payload in external_shuffles.values()
+        )
+    )
     return {
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "gpus": gpu_snapshot(),
@@ -432,6 +494,9 @@ def collect(output_dir: Path) -> dict[str, Any]:
         "gate1_all": gate1_all,
         "legacy_gate1": legacy_gate1,
         "external": external,
+        "external_pipeline": external_pipeline,
+        "external_access": external_access,
+        "external_shuffles": external_shuffles,
         "complete_gate1": complete_gate1,
         "complete_gate1_total": complete_gate1_total,
         "complete_slice_manifests": complete_slice_manifests,
@@ -440,6 +505,7 @@ def collect(output_dir: Path) -> dict[str, Any]:
         "complete_head_interventions": complete_head_interventions,
         "phase2_complete": phase2_complete,
         "capacity_complete": capacity_complete,
+        "external_complete": external_complete,
         "all_complete": (
             complete_gate1_total == len(GATE1) * len(GATE1_SEEDS)
             and complete_slice_manifests == len(GATE1_SEEDS)
@@ -451,6 +517,7 @@ def collect(output_dir: Path) -> dict[str, Any]:
             and head_intervention_comparison.get("status") == "complete"
             and phase2_complete
             and capacity_complete
+            and external_complete
             and queue_complete
             and address_diagnostics.get("status") == "complete"
         ),
@@ -708,6 +775,29 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
         items.append(
             "K={64,256,1024} finite-memory capacity sweep 已串行排队；"
             + (f"当前状态：{state}。" if state else "将在 one-pass 队列结束后自动启动。")
+        )
+    external = snapshot.get("external", {})
+    if snapshot.get("external_complete") is True:
+        for benchmark in ("xnli", "pawsx"):
+            means = {}
+            for variant in STANDARD_METHODS:
+                values = list(
+                    external.get(benchmark, {}).get("triad", {}).get(variant, {}).values()
+                )
+                if all(isinstance(value, int | float) for value in values):
+                    means[variant] = statistics.mean(float(value) for value in values)
+            if len(means) == len(STANDARD_METHODS):
+                items.append(
+                    f"{benchmark.upper()} 三 seed Macro accuracy："
+                    f"Semantic-RQ={means['semantic_rq']:.4f}，"
+                    f"Arithmetic-fixed={means['arithmetic_matched']:.4f}，"
+                    f"RQ-Shuffled={means['rq_shuffled']:.4f}。"
+                )
+    else:
+        state = snapshot.get("external_pipeline", {}).get("note")
+        items.append(
+            "XNLI/PAWS-X 的 benchmark-specific frequency-matched 三角对照已排队；"
+            + (f"当前状态：{state}。" if state else "将在 capacity sweep 后自动启动。")
         )
     items.append("旧 Arithmetic (matched) 实际仅约 32 行/头；中间 v2 又因原实现使用递增质数桶而非固定 256 行/头。两者均不进入主表，主表只读取 arithmetic_fixed 的 exact 目录。")
     items.append("早期 Gate-1 run 被 EarlyStoppingCallback 在约 1,600/12,208 step 截停，只覆盖约 13M tokens；这些结果仅作诊断。主表只读取禁用 early stopping、严格跑满 12,208 steps 的 fixedsteps run。")
@@ -1011,6 +1101,50 @@ def render(snapshot: dict[str, Any]) -> str:
             f"<td class='invalid'>{fmt(row['old_matched_seed42'])}</td>"
             f"<td>{fmt(row['corrected_matched_seed42'])}</td><td>{fmt(row['corrected_matched_seed43'])}</td></tr>"
         )
+    external_triad_rows = []
+    external_variant_labels = {
+        "arithmetic_matched": "Arithmetic-fixed",
+        "rq_shuffled": "RQ-Shuffled (frequency-matched)",
+        "semantic_rq": "Semantic-RQ",
+    }
+    for benchmark in ("xnli", "pawsx"):
+        triad = snapshot.get("external", {}).get(benchmark, {}).get("triad", {})
+        for variant in STANDARD_METHODS:
+            per_seed = triad.get(variant, {}) if isinstance(triad, dict) else {}
+            values = [per_seed.get(str(seed)) for seed in GATE1_SEEDS]
+            complete_values = [
+                float(value) for value in values if isinstance(value, int | float)
+            ]
+            mean = statistics.mean(complete_values) if len(complete_values) == 3 else None
+            std = statistics.stdev(complete_values) if len(complete_values) == 3 else None
+            external_triad_rows.append(
+                f"<tr><th>{benchmark.upper()}</th>"
+                f"<td>{external_variant_labels[variant]}</td>"
+                + "".join(f"<td>{fmt(value)}</td>" for value in values)
+                + f"<td>{fmt(mean)}</td><td>{fmt(std)}</td></tr>"
+            )
+    external_access_rows = []
+    for benchmark in ("xnli", "pawsx"):
+        access = snapshot.get("external_access", {}).get(benchmark, {})
+        orders = access.get("orders", {}) if isinstance(access, dict) else {}
+        shuffles = snapshot.get("external_shuffles", {})
+        preserved = all(
+            all(
+                value.get("access_weighted_histograms_preserved") is True
+                for value in shuffles.get(f"{benchmark}_seed{seed}", {})
+                .get("ngram_sizes", {}).values()
+                if isinstance(value, dict)
+            )
+            and shuffles.get(f"{benchmark}_seed{seed}", {}).get("status") == "complete"
+            for seed in GATE1_SEEDS
+        )
+        external_access_rows.append(
+            f"<tr><th>{benchmark.upper()}</th>"
+            f"<td>{'完成' if access.get('status') == 'complete' else '等待/运行中'}</td>"
+            f"<td>{orders.get('2', {}).get('total_accesses', '—')}</td>"
+            f"<td>{orders.get('3', {}).get('total_accesses', '—')}</td>"
+            f"<td>{'是' if preserved else '等待'}</td></tr>"
+        )
     conclusion_html = "".join(f"<li>{html.escape(item)}</li>" for item in conclusions(snapshot))
     active_rows = "".join(
         f'<tr><th>GPU {html.escape(str(job["gpu"]))}</th><td>{html.escape(job["script"])}</td><td>{html.escape(job["method"])}</td><td>{html.escape(str(job["seed"]))}</td><td>{job["pid"]}</td></tr>'
@@ -1039,7 +1173,9 @@ def render(snapshot: dict[str, Any]) -> str:
 <h2>Phase 2 · One-pass Replication（Gate: {phase2_status}）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(phase2_rows)}</tbody></table></div>
 <h2>Finite-memory Capacity Sweep · 训练矩阵</h2><div class="box"><table><thead><tr><th>每 head 容量</th><th>方法</th><th>状态</th><th>Eval loss ↓</th><th>峰值显存 GB</th></tr></thead><tbody>{''.join(capacity_rows)}</tbody></table></div>
 <h2>Finite-memory Capacity Sweep · Paired ΔNLL</h2><div class="box"><table><thead><tr><th>每 head 容量</th><th>比较</th><th>Overall ΔNLL ↓</th><th>95% CI</th><th>3g semantic/shared ΔNLL ↓</th><th>95% CI</th></tr></thead><tbody>{''.join(capacity_comparison_rows)}</tbody></table></div>
-<h2>外部验证（Macro accuracy）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>Arithmetic s42</th><th>RQ s42</th><th>RQ s43</th><th>旧 matched s42（无效）</th><th>修正 matched s42</th><th>修正 matched s43</th></tr></thead><tbody>{''.join(ext_rows)}</tbody></table></div>
+<h2>外部验证 · Benchmark-specific Frequency Audit</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>访问统计</th><th>2g accesses</th><th>3g accesses</th><th>3 seeds 加权 histogram 保持</th></tr></thead><tbody>{''.join(external_access_rows)}</tbody></table></div>
+<h2>外部验证 · 三 Seed Macro Accuracy</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th><th>Mean</th><th>Std</th></tr></thead><tbody>{''.join(external_triad_rows)}</tbody></table></div>
+<h2>外部验证 · 历史诊断（不承担主结论）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>Arithmetic s42</th><th>RQ s42</th><th>RQ s43</th><th>旧 matched s42（无效）</th><th>修正 matched s42</th><th>修正 matched s43</th></tr></thead><tbody>{''.join(ext_rows)}</tbody></table></div>
 <h2>当前可写结论</h2><ul class="conclusions">{conclusion_html}</ul>
 <p class="lead">公平口径：每个 n-gram order 为 8 heads × 256 rows/head = 2048 rows；正式 RQ-Shuffled 只在 LM-train 精确同访问频率组内置换完整 code vector，因此同时保持逐层行数和实际 access-weighted 桶负载，只破坏 n-gram↔语义地址对应。</p>
 <p class="lead">数据隔离：FineWeb-Edu 流的前 5,000 篇只用于离线建表；LM train/eval 固定跳过前 6,000 行后才 shuffle 和切分，地址语料与评测语料不重叠。</p></main></body></html>'''
