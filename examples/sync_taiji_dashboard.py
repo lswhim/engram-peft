@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="seokliu-any2.devcloud.woa.com")
     parser.add_argument("--interval", type=float, default=15.0)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--html-only", action="store_true", help="sync HTML even when the remote watcher has no JSON snapshot")
     return parser.parse_args()
 
 
@@ -51,12 +52,15 @@ def main() -> None:
     while True:
         try:
             page = fetch(args.host, args.instance, args.remote_html)
-            snapshot_bytes = fetch(args.host, args.instance, remote_json)
             if not page.lstrip().startswith(b"<!doctype html>"):
                 raise ValueError("remote dashboard is not valid HTML")
-            snapshot = json.loads(snapshot_bytes)
             atomic_write(args.local_html, page)
-            atomic_write(local_json, snapshot_bytes)
+            if args.html_only:
+                snapshot = {"updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "all_complete": False}
+            else:
+                snapshot_bytes = fetch(args.host, args.instance, remote_json)
+                snapshot = json.loads(snapshot_bytes)
+                atomic_write(local_json, snapshot_bytes)
             failures = 0
             print(f"[{snapshot['updated_at']}] local dashboard synchronized", flush=True)
             if args.once or snapshot.get("all_complete") is True:
