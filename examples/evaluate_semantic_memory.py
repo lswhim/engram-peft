@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedder", default="Qwen/Qwen3-Embedding-0.6B")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--embed-batch-size", type=int, default=64)
+    parser.add_argument("--geometry-cache", type=Path)
     parser.add_argument("--limit", type=int, default=0)
     return parser.parse_args()
 
@@ -120,11 +121,24 @@ def main() -> None:
         rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity")})
     geometry_indices=[i for i,row in enumerate(rows) if row["axis"]=="unseen_template"]
     if geometry_indices:
-        pairs=[(
-            query_specs[i][0].get("metadata",{}).get("canonical_geometry_text",query_specs[i][0]["prompt"]),
-            query_specs[i][1].get("geometry_text") or query_specs[i][1]["prompt"],
-        ) for i in geometry_indices]
-        for i,cosine in zip(geometry_indices,semantic_cosines(pairs,args.embedder,args.embed_batch_size),strict=True): rows[i]["semantic_similarity"]=cosine
+        cached: dict[str, float] = {}
+        if args.geometry_cache and args.geometry_cache.is_file():
+            cached = json.loads(args.geometry_cache.read_text())
+        missing_indices=[]; pairs=[]
+        for i in geometry_indices:
+            key=f"{rows[i]['case_id']}\t{rows[i]['prompt']}"
+            if key in cached: rows[i]["semantic_similarity"]=cached[key]
+            else:
+                missing_indices.append(i)
+                pairs.append((query_specs[i][0].get("metadata",{}).get("canonical_geometry_text",query_specs[i][0]["prompt"]),query_specs[i][1].get("geometry_text") or query_specs[i][1]["prompt"]))
+        if pairs:
+            for i,cosine in zip(missing_indices,semantic_cosines(pairs,args.embedder,args.embed_batch_size),strict=True):
+                rows[i]["semantic_similarity"]=cosine
+                cached[f"{rows[i]['case_id']}\t{rows[i]['prompt']}"]=cosine
+            if args.geometry_cache:
+                args.geometry_cache.parent.mkdir(parents=True,exist_ok=True)
+                temporary=args.geometry_cache.with_suffix(".tmp")
+                temporary.write_text(json.dumps(cached),encoding="utf-8"); os.replace(temporary,args.geometry_cache)
         quartile_bins([rows[i] for i in geometry_indices])
     payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","geometry_bins":"within-run quartiles"}}
     args.output.parent.mkdir(parents=True,exist_ok=True); samples=args.output.with_suffix(".jsonl")
