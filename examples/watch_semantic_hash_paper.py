@@ -849,7 +849,7 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
             values = [
                 standard_metric(
                     standard[f"{method}_seed{seed}"],
-                    "paloma_wikitext_103",
+                    "wikitext",
                     ("word_perplexity,none", "word_perplexity"),
                 )
                 for seed in GATE1_SEEDS
@@ -858,13 +858,13 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
                 means[method] = sum(float(value) for value in values) / len(values)
         if len(means) == len(STANDARD_METHODS):
             items.append(
-                "标准 Paloma WikiText-103 三 seed word PPL："
+                "标准 WikiText-103 三 seed word PPL："
                 f"Semantic-RQ={means['semantic_rq']:.3f}，"
                 f"Arithmetic-fixed={means['arithmetic_matched']:.3f}，"
                 f"RQ-Shuffled={means['rq_shuffled']:.3f}。"
             )
     else:
-        items.append("标准 LM 评测已排队：Paloma WikiText-103、Paloma C4 与 LAMBADA；完成前不把 200-row FineWeb slice 外推为标准 LM 结论。")
+        items.append("标准 LM 评测进行中：WikiText-103、C4 validation 与 LAMBADA；三方法三 seed 完成前不提前外推结论。")
     intervention = snapshot.get("head_intervention_comparison", {})
     if intervention.get("status") == "complete":
         primary = intervention.get("aggregate", {}).get(
@@ -1207,12 +1207,12 @@ def render(snapshot: dict[str, Any]) -> str:
             )
             wikitext = standard_metric(
                 payload,
-                "paloma_wikitext_103",
+                "wikitext",
                 ("word_perplexity,none", "word_perplexity"),
             )
             c4 = standard_metric(
                 payload,
-                "paloma_c4_en",
+                "c4",
                 ("word_perplexity,none", "word_perplexity"),
             )
             lambada_acc = standard_metric(
@@ -1225,7 +1225,11 @@ def render(snapshot: dict[str, Any]) -> str:
                 "lambada_openai",
                 ("perplexity,none", "perplexity"),
             )
-            state = "完成" if payload.get("status") == "complete" else "等待/运行中"
+            completed_tasks = sum(
+                task in payload.get("results", {})
+                for task in ("wikitext", "c4", "lambada_openai")
+            )
+            state = "完成" if completed_tasks == 3 else f"{completed_tasks}/3"
             standard_rows.append(
                 f"<tr><th>{labels[method]}</th><td>{seed}</td><td>{state}</td>"
                 f"<td>{fmt(wikitext, 3)}</td><td>{fmt(c4, 3)}</td>"
