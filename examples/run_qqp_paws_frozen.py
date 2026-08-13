@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import glob
 import json
 import os
@@ -189,6 +190,13 @@ def evaluate(
 
 def main() -> None:
     args = parse_args()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = args.output.with_suffix(args.output.suffix + ".lock")
+    lock_handle = lock_path.open("w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise RuntimeError(f"another run already owns {args.output}") from error
     if args.result_suffix and args.engram_weights:
         raise ValueError("use only one of --result-suffix and --engram-weights")
     if args.method == "base" and (args.result_suffix or args.engram_weights):
@@ -235,8 +243,6 @@ def main() -> None:
     )
     optimizer = AdamW(head.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     started = time.time()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-
     def write_payload(payload: Mapping[str, Any]) -> None:
         temporary = args.output.with_suffix(args.output.suffix + ".tmp")
         temporary.write_text(json.dumps(dict(payload), indent=2), encoding="utf-8")
