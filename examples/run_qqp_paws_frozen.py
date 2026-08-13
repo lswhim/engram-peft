@@ -227,6 +227,26 @@ def main() -> None:
     )
     optimizer = AdamW(head.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     started = time.time()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_payload(payload: Mapping[str, Any]) -> None:
+        temporary = args.output.with_suffix(args.output.suffix + ".tmp")
+        temporary.write_text(json.dumps(dict(payload), indent=2), encoding="utf-8")
+        os.replace(temporary, args.output)
+
+    status_payload: dict[str, Any] = {
+        "status": "training",
+        "protocol": "frozen Stage-1 representation; linear head trained on GLUE QQP only",
+        "method": args.method,
+        "seed": args.seed,
+        "engram_weights": str(args.engram_weights) if args.engram_weights else None,
+        "train_examples": len(qqp_train),
+        "epochs": args.epochs,
+        "total_steps": len(train_loader) * args.epochs,
+        "completed_steps": 0,
+        "paper_eligible": args.train_limit is None and args.eval_limit is None,
+    }
+    write_payload(status_payload)
     model.eval()
     for epoch in range(args.epochs):
         head.train()
@@ -238,6 +258,14 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            global_step = epoch * len(train_loader) + step
+            if step % 100 == 0 or step == len(train_loader):
+                status_payload.update(
+                    completed_steps=global_step,
+                    latest_loss=float(loss.item()),
+                    wall_time_seconds=time.time() - started,
+                )
+                write_payload(status_payload)
             if step % 500 == 0:
                 print(f"epoch={epoch + 1} step={step}/{len(train_loader)} loss={loss.item():.5f}", flush=True)
 
@@ -268,10 +296,7 @@ def main() -> None:
         "wall_time_seconds": time.time() - started,
         "peak_memory_gb": torch.cuda.max_memory_allocated() / 1024**3,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.output.with_suffix(args.output.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(temporary, args.output)
+    write_payload(payload)
     print(json.dumps(payload, indent=2), flush=True)
 
 

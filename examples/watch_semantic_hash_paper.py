@@ -441,7 +441,7 @@ def collect(output_dir: Path) -> dict[str, Any]:
             qqp_paws_root / f"{method}_seed{seed}.json"
         )
         for method in ("base", *STANDARD_METHODS)
-        for seed in ((42,) if method == "base" else GATE1_SEEDS)
+        for seed in GATE1_SEEDS
     }
     phase2_root = output_dir / "phase2_onepass"
     phase2_decision = read_json(phase2_root / "gate_decision.json")
@@ -1210,8 +1210,7 @@ def render(snapshot: dict[str, Any]) -> str:
         )
     standard_rows = []
     for method in ("base", *STANDARD_METHODS):
-        seeds = (42,) if method == "base" else GATE1_SEEDS
-        for seed in seeds:
+        for seed in GATE1_SEEDS:
             payload = snapshot.get("standard_lm", {}).get(
                 f"{method}_seed{seed}", {}
             )
@@ -1417,6 +1416,10 @@ def render(snapshot: dict[str, Any]) -> str:
             )
             if payload.get("status") == "complete":
                 status = '<span class="pill done">完成</span>'
+            elif payload.get("status") == "training":
+                completed = payload.get("completed_steps", 0)
+                total = payload.get("total_steps", 0)
+                status = f'<span class="pill run">{completed}/{total}</span>'
             else:
                 status = '<span class="pill wait">等待/运行中</span>'
             qqp_paws_rows.append(
