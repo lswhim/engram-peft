@@ -93,11 +93,15 @@ def geometry_analysis(root: Path) -> str:
         return f'<p><b>状态：</b>{state}。正式规模：2/3-gram 各 4,000；RQ-Shuffled 保持 bucket histogram。</p>'
     rows=[]
     for order,payload in d.get('orders',{}).items():
-        rows.append(f'<tr><th>{order}-gram</th><td>{payload.get("sampled_ngrams","—"):,}</td><td>{payload.get("candidate_pairs","—"):,}</td><td>{payload.get("spearman_semantic_vs_rq_overlap",float("nan")):.4f}</td><td>{payload.get("spearman_semantic_vs_shuffled_overlap",float("nan")):.4f}</td></tr>')
+        quadrant=payload.get('quadrants',{}).get('high_semantic_low_lexical',{})
+        rq_overlap=quadrant.get('rq_code_overlap')
+        shuffled_overlap=quadrant.get('shuffled_code_overlap')
+        contrast=(f'{100*rq_overlap:.2f}% / {100*shuffled_overlap:.2f}%' if isinstance(rq_overlap,(int,float)) and isinstance(shuffled_overlap,(int,float)) else '—')
+        rows.append(f'<tr><th>{order}-gram</th><td>{payload.get("sampled_ngrams","—"):,}</td><td>{payload.get("candidate_pairs","—"):,}</td><td>{payload.get("spearman_semantic_vs_rq_overlap",float("nan")):.4f}</td><td>{payload.get("spearman_semantic_vs_shuffled_overlap",float("nan")):.4f}</td><td>{contrast}</td></tr>')
     coverage=d.get('coverage',{})
     cov=' · '.join(f'{order}-gram={100*item.get("coverage",0):.2f}%' for order,item in coverage.get('per_order',{}).items()) or coverage.get('status','—')
     reconstruction=d.get('protocol',{}).get('surface_reconstruction','—')
-    return f'<p><b>状态：</b>{d.get("status","—")}；held-out coverage：{cov}；surface={reconstruction}</p><table><thead><tr><th>Order</th><th>N-grams</th><th>Candidate pairs</th><th>Spearman(semantic, RQ overlap)</th><th>Spearman(semantic, shuffled overlap)</th></tr></thead><tbody>{"".join(rows)}</tbody></table><p class="small">RQ-Shuffled 对完整 code vector 做行置换，保持各 level bucket histogram 与联合 code 分布。当前 surface 由 compressed key 的确定性 canonical representative 反解；因此可解释为地址几何验证，不宣称覆盖原始语料的全部真实表面变体。Coverage 因 FineWeb streaming split 在 offline 环境不可用而明确留空。</p>'
+    return f'<p><b>状态：</b>{d.get("status","—")}；held-out coverage：{cov}；surface={reconstruction}</p><table><thead><tr><th>Order</th><th>N-grams</th><th>Candidate pairs</th><th>Spearman(semantic, RQ overlap)</th><th>Spearman(semantic, shuffled overlap)</th><th>High-semantic / low-lexical overlap<br>RQ / Shuffled</th></tr></thead><tbody>{"".join(rows)}</tbody></table><p class="small">RQ-Shuffled 对完整 code vector 做行置换，保持各 level bucket histogram 与联合 code 分布。High-semantic / low-lexical 象限按各 order 内 semantic cosine ≥ Q75 且 char-trigram Jaccard ≤ Q25 定义。当前 surface 由 compressed key 的确定性 canonical representative 反解；因此可解释为地址几何验证，不宣称覆盖原始语料的全部真实表面变体。Coverage 因 FineWeb streaming split 在 offline 环境不可用而明确留空。</p>'
 
 def result_rows(root: Path) -> str:
     rows=[]
