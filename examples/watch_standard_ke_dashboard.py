@@ -8,9 +8,9 @@ from datetime import datetime
 from pathlib import Path
 
 RUNS = [
-    ("CounterFact", "Arithmetic-fixed", "logs/standard_cf_arithmetic_seed42.log", "running · source path verified"),
-    ("CounterFact", "LoRA", "logs/standard_cf_lora_seed42.log", "running · source path verified"),
-    ("ZsRE", "Arithmetic-fixed", "logs/standard_zsre_arithmetic_seed42_v2.log", "diagnostic only · 73.8 epochs"),
+    ("CounterFact", "Arithmetic-fixed", "logs/standard_cf_arithmetic_seed42.log", "invalid diagnostic · labels/hash fixed after launch"),
+    ("CounterFact", "LoRA", "logs/standard_cf_lora_seed42.log", "invalid diagnostic · labels fixed after launch"),
+    ("ZsRE", "Arithmetic-fixed", "logs/standard_zsre_arithmetic_seed42_v2.log", "invalid diagnostic · labels/hash + 73.8 epochs"),
     ("CounterFact", "Semantic-RQ", "logs/standard_cf_rq_seed42.log", "queued after RQ table"),
     ("ZsRE", "Arithmetic-fixed · matched", "logs/standard_zsre_arithmetic_matched_seed42.log", "queued · 204 steps ≈ 5 epochs"),
     ("ZsRE", "Semantic-RQ · matched", "logs/standard_zsre_rq_matched_seed42.log", "queued · 204 steps ≈ 5 epochs"),
