@@ -125,11 +125,23 @@ def load_ripple(paths: Iterable[Path]) -> list[EditCase]:
         for index, example in enumerate(json.loads(path.read_text(encoding="utf-8"))):
             edit = example["edit"]
             statement = str(edit["prompt"]).strip()
-            if " is " not in statement:
-                raise ValueError(f"Ripple edit lacks answer delimiter: {statement}")
-            edit_prompt, target = statement.rsplit(" is ", 1)
-            edit_prompt = f"{edit_prompt} is"
-            target = target.rstrip(".").strip()
+            target = ""
+            for axis in RIPPLE_SHOULD | RIPPLE_SHOULD_NOT:
+                for testcase in example.get(axis, []):
+                    for query in testcase.get("test_queries", []):
+                        if str(edit.get("target_id")) in {
+                            str(value) for value in query.get("target_ids", [])
+                        } and query.get("answers"):
+                            target = str(query["answers"][0]["value"])
+                            break
+                    if target: break
+                if target: break
+            if not target:
+                continue
+            bare_statement = statement.rstrip(".")
+            if not bare_statement.endswith(target):
+                continue
+            edit_prompt = bare_statement[: -len(target)].rstrip()
             queries: list[Query] = []
             for axis in sorted(RIPPLE_SHOULD | RIPPLE_SHOULD_NOT):
                 role = "should_propagate" if axis in RIPPLE_SHOULD else "should_not_propagate"
