@@ -16,6 +16,17 @@ raise SystemExit(0 if payload.get("status") == "complete" and payload.get("paper
 PY
 }
 
+gate_b_running() {
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python - "$1" <<'PY'
+import json, sys
+try:
+    payload = json.load(open(sys.argv[1]))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if payload.get("status") == "training" else 1)
+PY
+}
+
 while ! /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python - "$suffix" <<'PY'
 import glob, json, sys
 for path in glob.glob("outputs/benchmarks/*.json"):
@@ -52,6 +63,7 @@ for gate_seed in 42 43; do
   gate_suffix="_paper_gate1_fineweb_100m_fixedsteps_rq_shuffled_seed${gate_seed}"
   gate_b_output="outputs/semantic_hash_paper/qqp_paws/rq_shuffled_seed${gate_seed}.json"
   gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_rq_shuffled_seed${gate_seed}.log"
+  while gate_b_running "$gate_b_output"; do sleep 30; done
   gate_b_complete "$gate_b_output" && continue
   CUDA_VISIBLE_DEVICES=3 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
