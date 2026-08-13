@@ -1437,7 +1437,22 @@ def render(snapshot: dict[str, Any]) -> str:
     arithmetic42_lambada_acc = standard_metric(
         arithmetic42, "lambada_openai", ("acc,none", "acc")
     )
-    if arithmetic42_wiki is not None and arithmetic42_lambada_acc is not None:
+    arithmetic43 = snapshot.get("standard_lm", {}).get("arithmetic_matched_seed43", {})
+    arithmetic43_wiki = standard_metric(
+        arithmetic43, "wikitext", ("word_perplexity,none", "word_perplexity")
+    )
+    if (
+        arithmetic42_wiki is not None
+        and arithmetic43_wiki is not None
+        and arithmetic42_lambada_acc is not None
+    ):
+        public_verdict = "Arithmetic 退化已跨两 seed 复现"
+        public_detail = (
+            f"WikiText PPL：Base 12.430，seed42 {arithmetic42_wiki:.3f}，"
+            f"seed43 {arithmetic43_wiki:.3f}；seed42 LAMBADA Acc "
+            f"63.21%→{arithmetic42_lambada_acc:.2%}。等待 Semantic 与 Shuffled。"
+        )
+    elif arithmetic42_wiki is not None and arithmetic42_lambada_acc is not None:
         public_verdict = "Arithmetic seed42 明显退化"
         public_detail = (
             f"WikiText PPL 12.430→{arithmetic42_wiki:.3f}；"
