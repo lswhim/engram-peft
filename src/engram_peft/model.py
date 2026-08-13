@@ -574,10 +574,13 @@ class EngramModel(nn.Module, GenerationMixin):
                         c_ids = self.compressor.compress(input_ids_to_hash)
                         if isinstance(c_ids, torch.Tensor):
                             c_ids = c_ids.cpu().numpy()
-                        self._current_hash_indices = self.hash_mapping.hash(
-                            c_ids,
-                            original_ids=input_ids_to_hash.detach().cpu().numpy(),
-                        )
+                        if isinstance(self.hash_mapping, RQNgramMapping):
+                            self._current_hash_indices = self.hash_mapping.hash(
+                                c_ids,
+                                original_ids=input_ids_to_hash.detach().cpu().numpy(),
+                            )
+                        else:
+                            self._current_hash_indices = self.hash_mapping.hash(c_ids)
                     else:
                         input_ids_np = (
                             input_ids_to_hash.cpu().numpy()
@@ -732,10 +735,13 @@ class EngramModel(nn.Module, GenerationMixin):
                     c_ids = self.compressor.compress(input_ids_to_hash)
                     if isinstance(c_ids, torch.Tensor):
                         c_ids = c_ids.cpu().numpy()
-                    self._current_hash_indices = self.hash_mapping.hash(
-                        c_ids,
-                        original_ids=input_ids_to_hash.detach().cpu().numpy(),
-                    )
+                    if isinstance(self.hash_mapping, RQNgramMapping):
+                        self._current_hash_indices = self.hash_mapping.hash(
+                            c_ids,
+                            original_ids=input_ids_to_hash.detach().cpu().numpy(),
+                        )
+                    else:
+                        self._current_hash_indices = self.hash_mapping.hash(c_ids)
                 else:
                     input_ids_np = input_ids_to_hash.cpu().numpy()
                     self._current_hash_indices = self.hash_mapping.hash(input_ids_np)
