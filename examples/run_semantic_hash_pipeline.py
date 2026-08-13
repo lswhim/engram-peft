@@ -297,6 +297,7 @@ def standard_lm_command(
     output: Path,
     method: str,
     seed: int,
+    task: str,
     suffix: str | None = None,
 ) -> tuple[str, ...]:
     command = [
@@ -306,7 +307,8 @@ def standard_lm_command(
         "--model", model,
         "--method", method,
         "--seed", str(seed),
-        "--batch-size", "auto",
+        "--tasks", task,
+        "--batch-size", "1",
         "--output", str(output),
     ]
     if suffix is not None:
@@ -584,43 +586,31 @@ def make_tasks(args: argparse.Namespace, shuffled_dirs: dict[int, Path]) -> list
 
     standard_root = args.output_dir / "standard_lm"
     standard_evaluations: list[Task] = []
-    base_standard = standard_root / "base_seed42.json"
-    standard_evaluations.append(
-        Task(
-            name="standard_lm_base_seed42",
-            command=standard_lm_command(
-                args.model, base_standard, "base", 42
-            ),
-            log_name="standard_lm_base_seed42.log",
-            done=lambda output=base_standard: (
-                complete_metric(output)
-                and read_json(output).get("paper_eligible") is True
-            ),
-            ready=lambda: all(
-                result_with_suffix(suffixes[(name, 42)])
-                for name in ("arithmetic_matched", "rq_shuffled", "semantic_rq")
-            ),
-        )
-    )
+    public_tasks = {
+        "wikitext": "wikitext",
+        "lambada": "lambada_openai",
+        "c4": "c4",
+    }
     for seed in (42, 43, 44):
         for name in ("arithmetic_matched", "rq_shuffled", "semantic_rq"):
             suffix = suffixes[(name, seed)]
-            output = standard_root / f"{name}_seed{seed}.json"
-            standard_evaluations.append(
-                Task(
-                    name=f"standard_lm_{name}_seed{seed}",
-                    command=standard_lm_command(
-                        args.model, output, name, seed, suffix
-                    ),
-                    log_name=f"standard_lm_{name}_seed{seed}.log",
-                    done=lambda output=output: (
-                        complete_metric(output)
-                        and read_json(output).get("paper_eligible") is True
-                    ),
-                    requires_table=True,
-                    ready=lambda suffix=suffix: result_with_suffix(suffix),
+            for label, task in public_tasks.items():
+                output = standard_root / f"{name}_seed{seed}_{label}.json"
+                standard_evaluations.append(
+                    Task(
+                        name=f"standard_lm_{name}_seed{seed}_{label}",
+                        command=standard_lm_command(
+                            args.model, output, name, seed, task, suffix
+                        ),
+                        log_name=f"standard_lm_{name}_seed{seed}_{label}.log",
+                        done=lambda output=output: (
+                            complete_metric(output)
+                            and read_json(output).get("paper_eligible") is True
+                        ),
+                        requires_table=True,
+                        ready=lambda suffix=suffix: result_with_suffix(suffix),
+                    )
                 )
-            )
 
     # Benchmark-first paper protocol: completed matched checkpoints are sent
     # directly to public LM evaluation.  Bespoke token slices and masking are
