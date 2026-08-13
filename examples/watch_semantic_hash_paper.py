@@ -107,6 +107,7 @@ def active_experiments() -> list[dict[str, Any]]:
         "evaluate_standard_lm.py",
         "run_xtreme_xnli.py",
         "run_xtreme_pawsx.py",
+        "run_qqp_paws_frozen.py",
         "compare_engram_lora.py",
     }
     found: dict[tuple[str, str, str, str], dict[str, Any]] = {}
