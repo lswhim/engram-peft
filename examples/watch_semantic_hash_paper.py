@@ -416,16 +416,24 @@ def collect(output_dir: Path) -> dict[str, Any]:
         base_standard.setdefault("benchmark_files", []).append(str(split_path))
     if base_standard.get("results"):
         base_standard["status"] = "complete"
-    standard_lm = {
-        "base_seed42": base_standard,
-        **{
-            f"{method}_seed{seed}": read_json(
-                standard_root / f"{method}_seed{seed}.json"
-            )
-            for seed in GATE1_SEEDS
-            for method in STANDARD_METHODS
-        },
-    }
+    standard_lm = {"base_seed42": base_standard}
+    for seed in GATE1_SEEDS:
+        for method in STANDARD_METHODS:
+            key = f"{method}_seed{seed}"
+            combined = read_json(standard_root / f"{key}.json")
+            for split_path in sorted(standard_root.glob(f"{key}_*.json")):
+                split_payload = read_json(split_path)
+                if split_payload.get("status") != "complete":
+                    continue
+                if not combined:
+                    combined = {"status": "complete", "results": {}}
+                combined.setdefault("results", {}).update(
+                    split_payload.get("results", {})
+                )
+                combined.setdefault("benchmark_files", []).append(str(split_path))
+            if combined.get("results"):
+                combined["status"] = "complete"
+            standard_lm[key] = combined
     phase2_root = output_dir / "phase2_onepass"
     phase2_decision = read_json(phase2_root / "gate_decision.json")
     phase2_pipeline = read_json(phase2_root / "pipeline_state.json")
