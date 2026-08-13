@@ -24,6 +24,21 @@ do
   sleep 20
 done
 
+gate_b_output="outputs/semantic_hash_paper/qqp_paws/rq_shuffled_seed42.json"
+gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_rq_shuffled_seed42.log"
+if [[ ! -s "$gate_b_output" ]]; then
+  CUDA_VISIBLE_DEVICES=3 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
+    examples/run_qqp_paws_frozen.py \
+    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
+    --method rq_shuffled --seed 42 \
+    --result-suffix _paper_gate1_fineweb_100m_fixedsteps_rq_shuffled_seed42 \
+    --batch-size 16 --eval-batch-size 16 --num-workers 4 \
+    --output "$gate_b_output" > "$gate_b_log" 2>&1
+fi
+
 for task in wikitext lambada; do
   output="$output_dir/rq_shuffled_seed43_${task}.json"
   log="$log_dir/standard_lm_rq_shuffled_seed43_${task}.log"
