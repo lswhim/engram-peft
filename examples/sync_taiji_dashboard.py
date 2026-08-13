@@ -34,7 +34,11 @@ def main() -> None:
                 text=True,
                 timeout=45,
             )
-            payload = proc.stdout.rsplit("\n", 1)[-1].strip()
+            payload = "".join(
+                line.strip()
+                for line in proc.stdout.splitlines()
+                if line.strip() and not line.startswith("--- ")
+            )
             data = base64.b64decode(payload, validate=True)
             if b"FULL OFFICIAL BENCHMARKS" not in data:
                 raise ValueError("unexpected dashboard payload")
