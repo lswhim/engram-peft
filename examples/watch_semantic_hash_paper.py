@@ -912,16 +912,42 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
     diagnostic_fragments = []
     for benchmark in ("xnli", "pawsx"):
         row = external.get(benchmark, {})
-        arithmetic = row.get("corrected_matched_seed42")
-        semantic = row.get("rq_seed42")
-        if isinstance(arithmetic, int | float) and isinstance(semantic, int | float):
+        arithmetic_by_seed = [
+            row.get("corrected_matched_seed42"),
+            row.get("corrected_matched_seed43"),
+        ]
+        semantic_by_seed = [row.get("rq_seed42"), row.get("rq_seed43")]
+        paired = [
+            (float(arithmetic), float(semantic))
+            for arithmetic, semantic in zip(
+                arithmetic_by_seed, semantic_by_seed, strict=True
+            )
+            if isinstance(arithmetic, int | float)
+            and isinstance(semantic, int | float)
+        ]
+        if len(paired) == 2:
+            arithmetic_mean = statistics.mean(value[0] for value in paired)
+            semantic_mean = statistics.mean(value[1] for value in paired)
+            deltas = [100 * (semantic - arithmetic) for arithmetic, semantic in paired]
+            sign_note = (
+                "逐 seed 差值变号，目前更支持持平"
+                if deltas[0] * deltas[1] < 0
+                else "逐 seed 方向一致，但仍不足以形成主结论"
+            )
             diagnostic_fragments.append(
-                f"{benchmark.upper()}: Arithmetic-fixed={arithmetic:.4f}，"
+                f"{benchmark.upper()} 两 seed：Arithmetic-fixed={arithmetic_mean:.4f}，"
+                f"Semantic-RQ={semantic_mean:.4f}（均值 Δ={100 * (semantic_mean - arithmetic_mean):+.3f} pp；"
+                f"seed42/43 Δ={deltas[0]:+.3f}/{deltas[1]:+.3f} pp；{sign_note}）"
+            )
+        elif len(paired) == 1:
+            arithmetic, semantic = paired[0]
+            diagnostic_fragments.append(
+                f"{benchmark.upper()} 单 seed：Arithmetic-fixed={arithmetic:.4f}，"
                 f"Semantic-RQ={semantic:.4f}（Δ={100 * (semantic - arithmetic):+.2f} pp）"
             )
     if diagnostic_fragments:
         items.append(
-            "外部任务的单 seed 历史诊断："
+            "外部任务的历史诊断："
             + "；".join(diagnostic_fragments)
             + "。该比较尚缺 benchmark-specific RQ-Shuffled 与三 seed，不能承担主结论。"
         )
