@@ -172,10 +172,14 @@ def conclusions(root: Path) -> str:
         rq_runs=[d['metrics'] for d in rq_runs if d]
         arith_runs=[results.get(f'{ds}_arithmetic_seed{s}') for s in (42,43,44)]
         arith_runs=[d['metrics'] for d in arith_runs if d]
-        if rq_runs and len(rq_runs) < 3 and len(arith_runs) == 3:
+        if rq_runs and len(arith_runs) == 3:
             rm={k:100*statistics.mean(r[k] for r in rq_runs) for k in ('efficacy','paraphrase','specificity','harmonic_score')}
             am={k:100*statistics.mean(r[k] for r in arith_runs) for k in ('efficacy','paraphrase','specificity','harmonic_score')}
-            items.append(f'<li><b>{label} Semantic-RQ 预备信号（{len(rq_runs)}/3 seeds）：</b>相对 Arithmetic 三-seed均值，Δ efficacy={rm["efficacy"]-am["efficacy"]:+.2f}，Δ paraphrase={rm["paraphrase"]-am["paraphrase"]:+.2f}，Δ specificity={rm["specificity"]-am["specificity"]:+.2f}，Δ harmonic={rm["harmonic_score"]-am["harmonic_score"]:+.2f} 个百分点。仅作运行中趋势，不作为最终方法排序。</li>')
+            if len(rq_runs) == 3:
+                rs={k:100*statistics.stdev(r[k] for r in rq_runs) for k in ('efficacy','paraphrase','specificity','harmonic_score')}
+                items.append(f'<li><b>{label} Semantic-RQ 最终三 seed：</b>RQ={rm["efficacy"]:.2f}±{rs["efficacy"]:.2f} / {rm["paraphrase"]:.2f}±{rs["paraphrase"]:.2f} / {rm["specificity"]:.2f}±{rs["specificity"]:.2f} / {rm["harmonic_score"]:.2f}±{rs["harmonic_score"]:.2f}（efficacy / paraphrase / specificity / harmonic）；相对 Arithmetic 的 Δ={rm["efficacy"]-am["efficacy"]:+.2f} / {rm["paraphrase"]-am["paraphrase"]:+.2f} / {rm["specificity"]-am["specificity"]:+.2f} / {rm["harmonic_score"]-am["harmonic_score"]:+.2f} 个百分点。</li>')
+            else:
+                items.append(f'<li><b>{label} Semantic-RQ 预备信号（{len(rq_runs)}/3 seeds）：</b>相对 Arithmetic 三-seed均值，Δ efficacy={rm["efficacy"]-am["efficacy"]:+.2f}，Δ paraphrase={rm["paraphrase"]-am["paraphrase"]:+.2f}，Δ specificity={rm["specificity"]-am["specificity"]:+.2f}，Δ harmonic={rm["harmonic_score"]-am["harmonic_score"]:+.2f} 个百分点。仅作运行中趋势，不作为最终方法排序。</li>')
     rq_done=all(f'{ds}_rq_seed{s}' in results for ds in ('counterfact','zsre') for s in (42,43,44))
     if not rq_done:
         items.append('<li><b>Semantic-RQ 主结论尚未形成：</b>修复后三 seed 完整官方评测尚未全部完成；当前只报告已完成 run 的预备趋势。</li>')
