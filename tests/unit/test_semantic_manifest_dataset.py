@@ -32,7 +32,7 @@ def test_semantic_manifest_trains_only_on_canonical_prompt_target(tmp_path):
 def test_chronological_trainer_uses_sequential_sampler():
     trainer=object.__new__(ChronologicalEngramTrainer)
     trainer.train_dataset=[1,2,3]
-    assert list(trainer._get_train_sampler())==[0,1,2]
+    assert list(trainer._get_train_sampler([4,5]))==[0,1]
 
 
 def test_milestone_callback_saves_once(tmp_path):

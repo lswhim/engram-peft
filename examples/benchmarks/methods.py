@@ -36,8 +36,9 @@ logging.getLogger("engram_peft").setLevel(logging.INFO)
 class ChronologicalEngramTrainer(EngramTrainer):
     """HF Trainer variant that consumes the manifest in its original order."""
 
-    def _get_train_sampler(self) -> SequentialSampler:
-        return SequentialSampler(self.train_dataset)
+    def _get_train_sampler(self, train_dataset: Any | None = None) -> SequentialSampler:
+        dataset = train_dataset if train_dataset is not None else self.train_dataset
+        return SequentialSampler(dataset)
 
 
 class MilestoneSaveCallback(TrainerCallback):
