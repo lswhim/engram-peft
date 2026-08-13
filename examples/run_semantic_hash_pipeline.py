@@ -376,13 +376,6 @@ def make_tasks(args: argparse.Namespace, shuffled_dirs: dict[int, Path]) -> list
                 f"engram:hash_backend=rq,rq_table_dir={table_dir},{common},"
                 "engram_vocab_size_per_ngram=[2048,2048]"
             ),
-            # Boundary ablation only: legacy mixed arithmetic heads use distinct
-            # prime moduli, so this is not part of the exact-capacity causal triad.
-            "mixed_4_4": (
-                f"engram:hash_backend=mixed,rq_table_dir={table_dir},{common},"
-                "n_rq_levels_used=4,n_arith_heads_per_ngram=4,"
-                "engram_vocab_size_per_ngram=[1024,1024]"
-            ),
         }
         for name, method in specs.items():
             suffix = f"_paper_gate1_fineweb_100m_fixedsteps_{name}_seed{seed}"
@@ -462,7 +455,7 @@ def make_tasks(args: argparse.Namespace, shuffled_dirs: dict[int, Path]) -> list
                 ready=lambda summary=summary: complete_metric(summary),
             )
         )
-        for name in ("arithmetic_matched", "rq_shuffled", "semantic_rq", "mixed_4_4"):
+        for name in ("arithmetic_matched", "rq_shuffled", "semantic_rq"):
             suffix = suffixes[(name, seed)]
             output = slice_root / f"{name}_seed{seed}.json"
             slice_evaluations.append(
