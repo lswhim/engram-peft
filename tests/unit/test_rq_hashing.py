@@ -96,3 +96,35 @@ def test_row_trace_records_unique_addressed_rows(tmp_path: Path) -> None:
         (2, 1, 6),
     }
     assert sum(mapping.traced_row_counts().values()) == 4
+
+
+def test_runtime_shuffle_applies_identically_to_offline_and_lazy_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = tmp_path / "table"
+    _table(table)
+    meta = json.loads((table / "meta.json").read_text())
+    meta["runtime_shuffle_seed"] = 42
+    (table / "meta.json").write_text(json.dumps(meta))
+    mapping = RQNgramMapping(str(table), pad_id=0, cache_dir=str(tmp_path / "cache"))
+    semantic = np.asarray([[3, 4]], dtype=np.int64)
+    expected = mapping._shuffle_codes(2, semantic)[0]
+    assert not np.array_equal(expected, semantic[0])
+    np.testing.assert_array_equal(mapping.codes[2][0], expected)
+
+    def fake_encode(self, n, keys, original_windows):
+        del original_windows
+        codes = self._shuffle_codes(n, np.tile(semantic, (len(keys), 1)))
+        self._cache.executemany(
+            "INSERT OR REPLACE INTO codes(n, key, code) VALUES (?, ?, ?)",
+            [(n, int(key), code.astype(np.uint16).tobytes()) for key, code in zip(keys, codes, strict=True)],
+        )
+        self._cache.commit()
+        return codes
+
+    monkeypatch.setattr(RQNgramMapping, "_encode_missing", fake_encode)
+    actual = mapping.hash(
+        np.asarray([[1, 9]], dtype=np.int64),
+        original_ids=np.asarray([[11, 19]], dtype=np.int64),
+    )[0]
+    np.testing.assert_array_equal(actual[0, 1], expected)

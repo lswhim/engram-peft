@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import hashlib
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,7 @@ class RQNgramMapping:
         self.ngram_sizes = list(meta["ngram_sizes"])
         self.num_levels = int(meta["num_levels"])
         self.codebook_size = int(meta["codebook_size"])
+        self.runtime_shuffle_seed = meta.get("runtime_shuffle_seed")
         self.sorted_keys = {}
         self.codes = {}
         for n in self.ngram_sizes:
@@ -80,6 +82,7 @@ class RQNgramMapping:
             self.codes[n] = np.load(
                 os.path.join(self.table_dir, f"codes_{n}.npy")
             ).astype(np.int64)
+            self.codes[n] = self._shuffle_codes(n, self.codes[n])
         self.total_heads = self.num_levels * len(self.ngram_sizes)
         self.max_ngram_size = max(self.ngram_sizes)
         if self.cache_dir is not None:
@@ -111,6 +114,24 @@ class RQNgramMapping:
         for j in range(ngrams.shape[-1]):
             k = k * self.base + ngrams[..., j].astype(np.int64)
         return k
+
+    def _shuffle_codes(self, n: int, codes: np.ndarray) -> np.ndarray:
+        """Destroy partial-level RQ geometry with a frozen joint-code mapping."""
+        if self.runtime_shuffle_seed is None:
+            return codes
+        output = np.empty_like(codes, dtype=np.int64)
+        seed = int(self.runtime_shuffle_seed)
+        for row_index, row in enumerate(codes):
+            payload = np.asarray(row, dtype=np.uint32).tobytes()
+            digest = hashlib.blake2b(
+                payload,
+                digest_size=8 * self.num_levels,
+                person=f"rq{seed}:{n}".encode()[:16],
+            ).digest()
+            output[row_index] = (
+                np.frombuffer(digest, dtype=np.uint64) % self.codebook_size
+            ).astype(np.int64)
+        return output
 
     def _load_encoder(self) -> None:
         if self._embedder is not None:
@@ -175,6 +196,7 @@ class RQNgramMapping:
         codes = np.asarray(
             faiss.unpack_bitstrings(packed, self.num_levels, nbits), dtype=np.int64
         )
+        codes = self._shuffle_codes(n, codes)
         self._cache.executemany(
             "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
             [
