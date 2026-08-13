@@ -1452,7 +1452,32 @@ def render(snapshot: dict[str, Any]) -> str:
     semantic42_wiki = standard_metric(
         semantic42, "wikitext", ("word_perplexity,none", "word_perplexity")
     )
+    shuffled42_lambada_acc = standard_metric(
+        shuffled42, "lambada_openai", ("acc,none", "acc")
+    )
+    semantic42_lambada_acc = standard_metric(
+        semantic42, "lambada_openai", ("acc,none", "acc")
+    )
     if all(
+        value is not None
+        for value in (
+            arithmetic42_wiki,
+            shuffled42_wiki,
+            semantic42_wiki,
+            arithmetic42_lambada_acc,
+            shuffled42_lambada_acc,
+            semantic42_lambada_acc,
+        )
+    ):
+        public_verdict = "Seed42 两个公开任务均否定核心假设"
+        public_detail = (
+            f"WikiText PPL：Base {base_wikitext:.3f} / Semantic {semantic42_wiki:.3f} / "
+            f"Arithmetic {arithmetic42_wiki:.3f} / Shuffled {shuffled42_wiki:.3f}；"
+            f"LAMBADA Acc：Base {base_lambada_acc:.2%} / Semantic "
+            f"{semantic42_lambada_acc:.2%} / Arithmetic {arithmetic42_lambada_acc:.2%} / "
+            f"Shuffled {shuffled42_lambada_acc:.2%}。Semantic 未同时击败两个对照。"
+        )
+    elif all(
         value is not None
         for value in (arithmetic42_wiki, shuffled42_wiki, semantic42_wiki)
     ):
