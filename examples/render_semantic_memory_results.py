@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 from pathlib import Path
 
@@ -87,7 +88,12 @@ def render_wiki(root: Path, output: Path) -> dict:
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--root",type=Path,default=Path("outputs/semantic_memory")); parser.add_argument("--output",type=Path,default=Path("outputs/semantic_memory/paper_results")); args=parser.parse_args(); args.output.mkdir(parents=True,exist_ok=True)
     summary={"pararel":render_pararel(args.root/"pararel",args.output),"ripple":common_ripple(args.root/"ripple"),"wikibigedit":render_wiki(args.root/"wikibigedit",args.output)}
-    (args.output/"summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8"); print(json.dumps(summary,indent=2))
+    (args.output/"summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+    wiki_rows="".join(f"<tr><th>{point:,}</th>"+"".join(f"<td>{summary['wikibigedit'][m][str(point)]['efficacy']:.2f} / {summary['wikibigedit'][m][str(point)]['generalization']:.2f}</td>" for m in METHODS)+"</tr>" for point in POINTS)
+    ripple_rows="".join(f"<tr><th>{html.escape(role)}</th><td>{values['n']:,}</td>"+"".join(f"<td>{values[m]:.2f}</td>" for m in METHODS)+"</tr>" for role,values in summary["ripple"]["roles"].items())
+    page=f"""<!doctype html><html><head><meta charset='utf-8'><title>Semantic-Hash Engram Results</title><style>body{{font:15px system-ui;background:#f4f6fb;color:#182033;margin:0}}main{{max-width:1180px;margin:auto;padding:32px}}h1{{font-size:34px}}section{{background:white;border-radius:14px;padding:22px;margin:18px 0;box-shadow:0 4px 18px #18203312}}table{{border-collapse:collapse;width:100%}}th,td{{padding:10px;border-bottom:1px solid #e4e8f0;text-align:right}}th:first-child,td:first-child{{text-align:left}}img{{width:100%;border:1px solid #e4e8f0;border-radius:10px}}.bad{{color:#a63131}}.good{{color:#18794e}}code{{background:#eef1f7;padding:2px 5px;border-radius:4px}}</style></head><body><main><h1>Semantic-Hash Engram · Formal Results</h1><p>Qwen3-1.7B Base · seed 42 · complete official manifests · online OOV embedding→RQ with persistent cache</p><section><h2>结论</h2><ul><li class='bad'>ParaRel overall：Arithmetic {summary['pararel']['arithmetic']:.2f}，RQ {summary['pararel']['rq']:.2f}，Shuffled {summary['pararel']['rq_shuffled']:.2f}。语义几何存在局部效应，但总体不胜 Arithmetic。</li><li class='good'>WikiBigEdit@50K：RQ efficacy/generalization {summary['wikibigedit']['rq']['50000']['efficacy']:.2f}/{summary['wikibigedit']['rq']['50000']['generalization']:.2f}，比 Arithmetic 高 {summary['wikibigedit']['rq']['50000']['efficacy']-summary['wikibigedit']['arithmetic']['50000']['efficacy']:+.2f}/{summary['wikibigedit']['rq']['50000']['generalization']-summary['wikibigedit']['arithmetic']['50000']['generalization']:+.2f} pp；但与 Shuffled 基本相同，规模收益主要来自 RQ 结构。</li><li>Ripple common-eligible={summary['ripple']['common_eligible']:,}；RQ 对 Shuffled 的传播/不传播优势很小，边界未恶化但 semantic ordering 贡献有限。</li></ul></section><section><h2>WikiBigEdit scaling（Efficacy / Generalization, %）</h2><table><thead><tr><th>Writes</th><th>Arithmetic</th><th>Semantic-RQ</th><th>RQ-Shuffled</th></tr></thead><tbody>{wiki_rows}</tbody></table><img src='paper_results/wikibigedit_scaling_curves.png'><img src='paper_results/wikibigedit_retention_curves.png'></section><section><h2>ParaRel causal geometry</h2><img src='paper_results/pararel_geometry_heatmap.png'></section><section><h2>RippleEdits common-eligible paired set (%)</h2><table><thead><tr><th>Role</th><th>N</th><th>Arithmetic</th><th>Semantic-RQ</th><th>RQ-Shuffled</th></tr></thead><tbody>{ripple_rows}</tbody></table></section><section><h2>Protocol audit</h2><p>ParaRel: 5,000 cases / 16,024 queries / 16 geometry bins. Ripple: 3,780 cases / 36,570 scorable queries; paired table uses intersection eligible queries. WikiBigEdit: one chronological adapter, milestones 1K/5K/10K/50K, disjoint fixed 500-case cohorts.</p></section></main></body></html>"""
+    (args.output.parent/"dashboard_formal.html").write_text(page,encoding="utf-8")
+    print(json.dumps(summary,indent=2))
 
 
 if __name__=="__main__": main()
