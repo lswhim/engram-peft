@@ -12,8 +12,10 @@ All steps are OFFLINE and the result is frozen, so runtime stays O(1) / no neura
      This is the only semantic step; it happens here once.
   4. Train a faiss ResidualQuantizer (M levels x K codes) per n-gram size; encode each
      n-gram into M integer codes.
-  5. Save {sorted int64 key -> M codes} arrays + meta. OOV at runtime falls back to the
-     arithmetic hash, so the RQ object itself need not be persisted.
+  5. Save {sorted int64 key -> M codes} arrays, metadata, and the trained FAISS RQ index.
+     The persisted quantizer is required to encode previously unseen n-gram vectors with
+     the same frozen address geometry. Runtime refuses missing keys instead of falling
+     back to a different hash family.
 
 Key encoding (per n-gram size n): k = sum_j c_j * base^(n-1-j), base = V'+1, int64.
 With V'~1e5 and n<=3 this stays < int64 max.
@@ -176,11 +178,12 @@ def train_rq(args, emb):
     d = emb.shape[1]
     nbits = int(np.log2(args.codebook_size))
     assert (1 << nbits) == args.codebook_size, "codebook_size must be power of 2"
-    rq = faiss.ResidualQuantizer(d, args.num_levels, nbits)
+    index = faiss.IndexResidualQuantizer(d, args.num_levels, nbits)
     x = np.ascontiguousarray(emb.astype(np.float32))
-    rq.train(x)
-    packed = rq.compute_codes(x)
-    return unpack_codes(packed, args.num_levels, nbits).astype(np.uint16)
+    index.train(x)
+    packed = index.sa_encode(x)
+    codes = unpack_codes(packed, args.num_levels, nbits).astype(np.uint16)
+    return codes, index
 
 
 def main() -> None:
@@ -200,6 +203,8 @@ def main() -> None:
         "codebook_size": args.codebook_size,
         "embedder": args.embedder,
         "base_tokenizer": args.base_tokenizer,
+        "pad_token_id": int(tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id),
+        "strict_semantic_rq": True,
     }
     for n in args.ngram_sizes:
         keys, texts = selected[n]["keys"], selected[n]["texts"]
@@ -207,9 +212,12 @@ def main() -> None:
             print(f"[warn] no {n}-grams kept; skipping")
             continue
         emb = embed_texts(args, texts)
-        codes = train_rq(args, emb)
+        codes, rq_index = train_rq(args, emb)
+        import faiss
+
         np.save(os.path.join(args.output_dir, f"keys_{n}.npy"), keys)
         np.save(os.path.join(args.output_dir, f"codes_{n}.npy"), codes)
+        faiss.write_index(rq_index, os.path.join(args.output_dir, f"rq_{n}.faiss"))
         print(f"[save] {n}-gram keys{keys.shape} codes{codes.shape}")
 
     with open(os.path.join(args.output_dir, "meta.json"), "w") as f:

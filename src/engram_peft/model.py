@@ -134,6 +134,9 @@ class EngramModel(nn.Module, GenerationMixin):
             self.hash_mapping = RQNgramMapping(
                 table_dir=config.rq_table_dir,
                 pad_id=mapped_pad_id,
+                cache_dir=config.rq_cache_dir,
+                embed_device=config.rq_embed_device,
+                embed_batch_size=config.rq_embed_batch_size,
             )
         elif config.hash_backend == "arithmetic_fixed":
             self.hash_mapping = FixedNgramHashMapping(
@@ -571,7 +574,10 @@ class EngramModel(nn.Module, GenerationMixin):
                         c_ids = self.compressor.compress(input_ids_to_hash)
                         if isinstance(c_ids, torch.Tensor):
                             c_ids = c_ids.cpu().numpy()
-                        self._current_hash_indices = self.hash_mapping.hash(c_ids)
+                        self._current_hash_indices = self.hash_mapping.hash(
+                            c_ids,
+                            original_ids=input_ids_to_hash.detach().cpu().numpy(),
+                        )
                     else:
                         input_ids_np = (
                             input_ids_to_hash.cpu().numpy()
@@ -726,7 +732,10 @@ class EngramModel(nn.Module, GenerationMixin):
                     c_ids = self.compressor.compress(input_ids_to_hash)
                     if isinstance(c_ids, torch.Tensor):
                         c_ids = c_ids.cpu().numpy()
-                    self._current_hash_indices = self.hash_mapping.hash(c_ids)
+                    self._current_hash_indices = self.hash_mapping.hash(
+                        c_ids,
+                        original_ids=input_ids_to_hash.detach().cpu().numpy(),
+                    )
                 else:
                     input_ids_np = input_ids_to_hash.cpu().numpy()
                     self._current_hash_indices = self.hash_mapping.hash(input_ids_np)

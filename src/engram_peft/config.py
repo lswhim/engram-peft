@@ -148,6 +148,21 @@ class EngramConfig(PreTrainedConfig):
         default=None,
         metadata={"help": "Path to the prebuilt RQ table dir (required if hash_backend in {'rq','mixed'})."},
     )
+    rq_cache_dir: str | None = field(
+        default=None,
+        metadata={
+            "help": "Writable persistent cache for lazy semantic RQ codes. Required "
+            "for strict all-n-gram rq runs; use a unique directory per address geometry."
+        },
+    )
+    rq_embed_device: str = field(
+        default="cuda",
+        metadata={"help": "Device used for first-seen n-gram semantic encoding."},
+    )
+    rq_embed_batch_size: int = field(
+        default=256,
+        metadata={"help": "Unique cache misses per frozen semantic-encoder batch."},
+    )
     n_rq_levels_used: int = field(
         default=4,
         metadata={"help": "Mixed-hash: how many of the RQ table's M levels to use per n-gram size."},

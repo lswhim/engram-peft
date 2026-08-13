@@ -103,6 +103,12 @@ class EngramDataCollator(DataCollatorForLanguageModeling):
             if isinstance(pad_id, int):
                 batch["labels"][input_ids == pad_id] = -100
 
+        # Lazy semantic RQ must resolve first-seen n-grams in the main process. Doing
+        # this in DataLoader workers would load one embedding model per worker and
+        # cannot safely maintain a shared persistent cache.
+        if self.config.hash_backend == "rq":
+            return batch
+
         # Step 2: Handle tokenizer compression if enabled and compressor is provided
         # If config says compression is enabled but no compressor is provided,
         # we fallback to raw IDs
