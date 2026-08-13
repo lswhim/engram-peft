@@ -1545,6 +1545,10 @@ def render(snapshot: dict[str, Any]) -> str:
     semantic42_lambada_acc = standard_metric(
         semantic42, "lambada_openai", ("acc,none", "acc")
     )
+    shuffled43 = snapshot.get("standard_lm", {}).get("rq_shuffled_seed43", {})
+    shuffled43_wiki = standard_metric(
+        shuffled43, "wikitext", ("word_perplexity,none", "word_perplexity")
+    )
     if all(
         value is not None
         for value in (
@@ -1564,6 +1568,11 @@ def render(snapshot: dict[str, Any]) -> str:
             f"{semantic42_lambada_acc:.2%} / Arithmetic {arithmetic42_lambada_acc:.2%} / "
             f"Shuffled {shuffled42_lambada_acc:.2%}。Semantic 未同时击败两个对照。"
         )
+        if shuffled43_wiki is not None:
+            public_detail += (
+                f" Shuffled WikiText 已跨 seed 复现：seed42 {shuffled42_wiki:.3f} / "
+                f"seed43 {shuffled43_wiki:.3f}，均劣于 Base。"
+            )
     elif all(
         value is not None
         for value in (arithmetic42_wiki, shuffled42_wiki, semantic42_wiki)
