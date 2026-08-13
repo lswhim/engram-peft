@@ -434,6 +434,14 @@ def collect(output_dir: Path) -> dict[str, Any]:
             if combined.get("results"):
                 combined["status"] = "complete"
             standard_lm[key] = combined
+    qqp_paws_root = output_dir / "qqp_paws"
+    qqp_paws = {
+        f"{method}_seed{seed}": read_json(
+            qqp_paws_root / f"{method}_seed{seed}.json"
+        )
+        for method in ("base", *STANDARD_METHODS)
+        for seed in ((42,) if method == "base" else GATE1_SEEDS)
+    }
     phase2_root = output_dir / "phase2_onepass"
     phase2_decision = read_json(phase2_root / "gate_decision.json")
     phase2_pipeline = read_json(phase2_root / "pipeline_state.json")
@@ -561,6 +569,7 @@ def collect(output_dir: Path) -> dict[str, Any]:
         "head_interventions": head_interventions,
         "head_intervention_comparison": head_intervention_comparison,
         "standard_lm": standard_lm,
+        "qqp_paws": qqp_paws,
         "phase2_decision": phase2_decision,
         "phase2_pipeline": phase2_pipeline,
         "phase2_gate1": phase2_gate1,
@@ -1392,6 +1401,30 @@ def render(snapshot: dict[str, Any]) -> str:
     standard_body = "".join(completed_standard_rows) or (
         '<tr><td colspan="6" class="empty">等待公平 matched checkpoints 完成；完成后立即运行公开 LM benchmark。</td></tr>'
     )
+    qqp_paws_rows = []
+    for method in ("base", *STANDARD_METHODS):
+        seeds = (42,) if method == "base" else GATE1_SEEDS
+        for seed in seeds:
+            payload = snapshot.get("qqp_paws", {}).get(f"{method}_seed{seed}", {})
+            metrics = payload.get("metrics", {}) if isinstance(payload, dict) else {}
+            qqp = metrics.get("qqp_validation", {}) if isinstance(metrics, dict) else {}
+            wiki = metrics.get("paws_wiki_test", {}) if isinstance(metrics, dict) else {}
+            paws_qqp = (
+                metrics.get("paws_qqp_dev_and_test", {})
+                if isinstance(metrics, dict)
+                else {}
+            )
+            if payload.get("status") == "complete":
+                status = '<span class="pill done">完成</span>'
+            else:
+                status = '<span class="pill wait">等待/运行中</span>'
+            qqp_paws_rows.append(
+                f"<tr><th>{labels[method]}</th><td>{seed}</td><td>{status}</td>"
+                f"<td>{fmt(qqp.get('accuracy'), 4)}</td><td>{fmt(qqp.get('f1'), 4)}</td>"
+                f"<td>{fmt(wiki.get('accuracy'), 4)}</td><td>{fmt(wiki.get('f1'), 4)}</td>"
+                f"<td>{fmt(paws_qqp.get('accuracy'), 4)}</td><td>{fmt(paws_qqp.get('f1'), 4)}</td></tr>"
+            )
+    qqp_paws_body = "".join(qqp_paws_rows)
     base_payload = snapshot.get("standard_lm", {}).get("base_seed42", {})
     base_lambada_acc = standard_metric(
         base_payload, "lambada_openai", ("acc,none", "acc")
@@ -1555,7 +1588,7 @@ def render(snapshot: dict[str, Any]) -> str:
 <h2>正在运行</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>阶段</th><th>Step</th><th>Loss</th><th>PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
 <h2>阶段 1 · 训练三组公平对照模型（不是最终 Benchmark）</h2><p class="muted">这一步只制造后续公开 benchmark 所需的实验模型。三种方法使用同一底座、数据、参数量、表容量、训练 token 和 seed；只有跑满 12,208 steps 的 checkpoint 才能进入 Gate A / Gate B。表里的中间 loss 仅用于确认训练正常，禁止据此声称哪种方法更好。</p><div class="box"><table><thead><tr><th>对照</th><th>唯一关键差别</th><th>它回答的问题</th></tr></thead><tbody><tr><th>Semantic-RQ vs Arithmetic-fixed</th><td>语义量化地址 vs 原始离散 n-gram hash</td><td>新寻址整体是否优于原始 Engram 寻址？</td></tr><tr><th>Semantic-RQ vs RQ-Shuffled</th><td>容量和访问频率匹配，但 Shuffled 破坏语义邻域</td><td>若有收益，是否真的来自语义地址几何？这是最关键的因果对照。</td></tr><tr><th>RQ-Shuffled vs Arithmetic-fixed</th><td>量化桶统计变化，但没有正确语义对应</td><td>单纯改变碰撞/桶分布是否已经足以产生收益？</td></tr></tbody></table></div><div class="box"><table><thead><tr><th>待训练方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(replication_rows)}</tbody></table></div>
 <h2>Gate A · 标准语言建模 Benchmark</h2><p class="muted">第一主表。Semantic-RQ 必须同时优于 Arithmetic-fixed 与 RQ-Shuffled，且至少两个公开 benchmark 方向一致。</p><div class="box"><table><thead><tr><th>方法</th><th>Seed</th><th>WikiText-103 PPL ↓</th><th>C4 validation PPL ↓</th><th>LAMBADA Acc ↑</th><th>LAMBADA PPL ↓</th></tr></thead><tbody>{standard_body}</tbody></table></div>
-<h2>Gate B · QQP → PAWS-QQP</h2><div class="box"><table><thead><tr><th>公开协议</th><th>方法</th><th>Seeds</th><th>主指标</th><th>状态</th></tr></thead><tbody><tr><th>QQP validation</th><td>冻结 Base / Arithmetic / Shuffled / Semantic，仅训练统一分类头</td><td>42,43,44</td><td>Accuracy / F1</td><td><span class="pill wait">runner 构建中</span></td></tr><tr><th>QQP → PAWS-QQP dev_and_test</th><td>同一 QQP 分类头，目标域零更新</td><td>42,43,44</td><td>Accuracy / F1 / AUROC</td><td><span class="pill wait">用官方 index 重建 677 条</span></td></tr><tr><th>PAWS-Wiki test</th><td>独立公开辅助集，不冒充 PAWS-QQP</td><td>42,43,44</td><td>Accuracy / F1</td><td><span class="pill wait">辅助复现</span></td></tr></tbody></table></div>
+<h2>Gate B · 冻结表示的 QQP → PAWS</h2><p class="muted">阶段 1 Base/Engram checkpoint 全部冻结，只在 GLUE QQP 上训练同构线性分类头。PAWS-Wiki 是当前可直接复现的辅助 OOD；PAWS-QQP 官方 index 链接失效，恢复并校验 11,988/677 行之前该列保持为空，绝不拿 Wiki 数据冒充。</p><div class="box"><table><thead><tr><th>方法</th><th>Seed</th><th>状态</th><th>QQP Acc ↑</th><th>QQP F1 ↑</th><th>PAWS-Wiki Acc ↑</th><th>PAWS-Wiki F1 ↑</th><th>PAWS-QQP Acc ↑</th><th>PAWS-QQP F1 ↑</th></tr></thead><tbody>{qqp_paws_body}</tbody></table></div>
 <details><summary>附录证据：地址几何与公平性</summary><h2>地址结构诊断</h2><div class="box"><table><thead><tr><th>Order</th><th>ρ(semantic,RQ)</th><th>ρ(semantic,shuffle)</th><th>低词面高语义 overlap</th><th>shuffle overlap</th><th>coverage</th><th>pairs</th></tr></thead><tbody>{''.join(diagnostic_rows)}</tbody></table></div><h2>容量公平性</h2><div class="box"><table><thead><tr><th>方法</th><th>Rows/order</th><th>可训练参数</th><th>资格</th></tr></thead><tbody><tr><th>Semantic-RQ M8,K256</th><td>2048</td><td>26,984,448</td><td><span class="pill done">有效</span></td></tr><tr><th>Arithmetic-fixed 8×256</th><td>2048</td><td>26,984,448</td><td><span class="pill done">有效</span></td></tr><tr><th>旧 arithmetic/matched-v2</th><td>不匹配</td><td>不匹配</td><td><span class="pill fail">永久排除</span></td></tr></tbody></table></div></details>
 <p class="muted" style="margin-top:28px">判死规则：若标准 LM 与 QQP→PAWS 两条主线均不优于两个公平基线，则停止扩规模；不使用自建 slice 或地址相关性包装成方法收益。</p></main></body></html>'''
 
