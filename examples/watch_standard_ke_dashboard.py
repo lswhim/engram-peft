@@ -130,6 +130,19 @@ def conclusions(root: Path) -> str:
             results[path.stem]=d
     items=[]
     for ds,label in [('counterfact','CounterFact'),('zsre','ZsRE')]:
+        triples={}
+        for method in ('arithmetic','lora'):
+            runs=[]
+            for seed in (42,43,44):
+                d=results.get(f'{ds}_{method}_seed{seed}')
+                if d: runs.append(d['metrics'])
+            if len(runs) == 3:
+                triples[method]={k:(100*statistics.mean(xs:=[r[k] for r in runs]),100*statistics.stdev(xs)) for k in ('efficacy','paraphrase','specificity','harmonic_score')}
+        if len(triples) == 2:
+            a,l=triples['arithmetic'],triples['lora']
+            fmt=lambda x:f'{x[0]:.2f}±{x[1]:.2f}'
+            items.append(f'<li><b>{label} 三 seed：</b>Arithmetic→LoRA 的 efficacy 为 {fmt(a["efficacy"])}→{fmt(l["efficacy"])}，paraphrase 为 {fmt(a["paraphrase"])}→{fmt(l["paraphrase"])}，specificity 为 {fmt(a["specificity"])}→{fmt(l["specificity"])}，harmonic 为 {fmt(a["harmonic_score"])}→{fmt(l["harmonic_score"])}。</li>')
+            continue
         b=results.get(f'{ds}_base_seed42'); a=results.get(f'{ds}_arithmetic_seed42'); l=results.get(f'{ds}_lora_seed42')
         if b and a and l:
             bm,am,lm=b['metrics'],a['metrics'],l['metrics']
