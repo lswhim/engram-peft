@@ -91,6 +91,14 @@ def load_paws_qqp(path: Path) -> Dataset:
     return Dataset.from_list(rows)
 
 
+def result_is_complete(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload.get("status") == "complete" and payload.get("paper_eligible") is True
+
+
 def normalize_rows(dataset: Dataset, source: str) -> Dataset:
     if source == "paws":
         return dataset.rename_columns({"sentence1": "question1", "sentence2": "question2"})

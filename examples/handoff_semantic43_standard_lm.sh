@@ -5,6 +5,17 @@ suffix="_paper_gate1_fineweb_100m_fixedsteps_semantic_rq_seed43"
 output_dir="outputs/semantic_hash_paper/standard_lm"
 log_dir="outputs/semantic_hash_paper/logs"
 
+gate_b_complete() {
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python - "$1" <<'PY'
+import json, sys
+try:
+    payload = json.load(open(sys.argv[1]))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if payload.get("status") == "complete" and payload.get("paper_eligible") is True else 1)
+PY
+}
+
 while ! /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python - "$suffix" <<'PY'
 import glob, json, sys
 for path in glob.glob("outputs/benchmarks/*.json"):
@@ -39,7 +50,7 @@ done
 
 gate_b_output="outputs/semantic_hash_paper/qqp_paws/semantic_rq_seed43.json"
 gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_semantic_rq_seed43.log"
-if [[ ! -s "$gate_b_output" ]]; then
+if ! gate_b_complete "$gate_b_output"; then
   CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
@@ -57,7 +68,7 @@ for method_seed_suffix in \
 do
   read -r gate_method gate_seed gate_suffix <<< "$method_seed_suffix"
   gate_b_output="outputs/semantic_hash_paper/qqp_paws/${gate_method}_seed${gate_seed}.json"
-  [[ -s "$gate_b_output" ]] && continue
+  gate_b_complete "$gate_b_output" && continue
   suffix_args=()
   [[ "$gate_suffix" != none ]] && suffix_args=(--result-suffix "$gate_suffix")
   CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \

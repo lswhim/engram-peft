@@ -15,6 +15,17 @@ model=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 output_dir=outputs/semantic_hash_paper/standard_lm
 log_dir=outputs/semantic_hash_paper/logs
 
+gate_b_complete() {
+  "$python" - "$1" <<'PY'
+import json, sys
+try:
+    payload = json.load(open(sys.argv[1]))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if payload.get("status") == "complete" and payload.get("paper_eligible") is True else 1)
+PY
+}
+
 while ! "$python" - "$suffix" <<'PY'
 import glob, json, sys
 for path in glob.glob("outputs/benchmarks/*.json"):
@@ -46,7 +57,7 @@ for task in wikitext lambada; do
 done
 
 gate_b_output="outputs/semantic_hash_paper/qqp_paws/${method}_seed44.json"
-if [[ ! -s "$gate_b_output" ]]; then
+if ! gate_b_complete "$gate_b_output"; then
   CUDA_VISIBLE_DEVICES="$gpu" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
@@ -58,7 +69,7 @@ fi
 
 if [[ "$method" == "rq_shuffled" ]]; then
   base_output="outputs/semantic_hash_paper/qqp_paws/base_seed44.json"
-  if [[ ! -s "$base_output" ]]; then
+  if ! gate_b_complete "$base_output"; then
     CUDA_VISIBLE_DEVICES="$gpu" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
     PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
