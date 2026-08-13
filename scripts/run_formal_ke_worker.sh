@@ -42,12 +42,18 @@ run_one() {
   local train_log="logs/formal_v3_${short}_${METHOD}_seed${SEED}.log"
   local eval_log="logs/formal_v3_eval_${short}_${METHOD}_seed${SEED}.log"
   local result="outputs/standard_ke_v3/${dataset}_${METHOD}_seed${SEED}.json"
+  local method_with_budget
+  if [[ "$METHOD_SPEC" == *:* ]]; then
+    method_with_budget="${METHOD_SPEC},save_steps=${steps},eval_steps=${steps}"
+  else
+    method_with_budget="${METHOD_SPEC}:save_steps=${steps},eval_steps=${steps}"
+  fi
 
   "$PY" -u examples/compare_engram_lora.py \
     --dataset "${dataset}_canonical" --model_name "$MODEL" --max_steps "$steps" \
     --subset 999999 --batch_size 4 --grad_accum 8 --max_length 64 --num_workers 0 \
     --seed "$SEED" --disable_early_stopping --skip_plot --skip_inference \
-    --run_suffix "$suffix" --methods "${METHOD_SPEC},save_steps=${steps},eval_steps=${steps}" \
+    --run_suffix "$suffix" --methods "$method_with_budget" \
     > "$train_log" 2>&1
 
   if [[ "$METHOD" == lora ]]; then
