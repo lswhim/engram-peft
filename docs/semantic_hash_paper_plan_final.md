@@ -1,233 +1,358 @@
-# Semantic Hash for Engram：以语义寻址的迁移—干扰边界为主线
+# Semantic-Addressed Engram：多语言、可扩展的条件知识记忆
 
-> 版本：v3（2026-08-13）
+> 版本：v4（2026-08-13）
 >
-> 资源：4 × NVIDIA A100 40GB
+> 目标会议：ICML 2026
 >
-> 状态：旧 RQ 使用静态 100k 精确表、OOV arithmetic fallback，且 FAISS packed code 解码错误；所有旧 RQ 数字只用于提出假设，不进入论文结果。
+> 资源上限：4 × NVIDIA A100 40GB
+>
+> 原则：先证明 Engram memory 的独特价值，再证明 Semantic Hash 相对 Arithmetic addressing 的增量价值。
 
-## 0. 先把问题说清楚
+## 0. 最终研究定位
 
-普通 FineWeb CPT 主要测“Engram 能否降低平均 next-token loss”。它不能直接回答 Semantic Hash
-是否有用，因为同一 n-gram 在训练和测试中可以直接命中已训练地址，Arithmetic 也能完成记忆。
+### 一句话问题
 
-Semantic Hash 真正独有的能力应出现在：
+> Can a semantically addressed conditional memory write knowledge in one language and retrieve it in unseen languages, while preserving the frozen backbone and retaining Engram's sparse, scalable memory properties?
+
+### 一句话方法
+
+冻结多语言 LLM backbone，只向 Engram memory 写入新事实；查询 n-gram 经过冻结多语言 embedding encoder
+和冻结 RQ codebook 得到多头地址，首次计算后缓存，使不同语言、不同表述的语义等价查询能够部分共享已写入
+memory rows。
+
+### 为什么这个定位比普通 LM / PAWS-X 合理
+
+原版 Engram 的核心不是“小参数 adapter”，而是把静态知识和局部模式从神经计算中分离到可扩展、确定性寻址、
+可 offload 的条件记忆。Semantic Hash 的新增价值也不是减少平均碰撞，而是让不同表面形式可以共享一次写入。
+
+因此论文需要同时成立两件事：
+
+1. **Engram advantage**：冻结 backbone、稀疏写 memory，在连续知识注入中比 LoRA/FT 更少遗忘，写入成本随
+   memory 容量近似不变，并可独立保存、替换和 offload；
+2. **Semantic Hash advantage**：在相同 Engram 容量和训练预算下，源语言写入能够迁移到未参与训练的语言和
+   paraphrase，优于 Arithmetic 与破坏语义对应的 RQ-Shuffled。
+
+不能只证明第二件事，也不能把 Engram 本来就具备的 offload 说成 Semantic Hash 的贡献。
+
+---
+
+## 1. 文献实验范式给我们的约束
+
+### 原版 Engram
+
+原论文通过以下证据建立 conditional memory：
+
+- iso-parameter / iso-FLOPs 比较，而不是只和裸 Base 比；
+- memory slot 数量扩展曲线，证明容量可在不增加激活计算的情况下增长；
+- Pile loss、知识、推理、阅读理解、代码/数学的全面 benchmark；
+- 移除/缩放 Engram 后，事实知识比阅读理解下降更严重，证明 memory 功能分工；
+- long-context NIAH、early-layer representation、attention 分工和 gate 可视化；
+- 100B 参数表从 host memory prefetch 的吞吐实验。
+
+### Engram-Nine
+
+它严格匹配参数后发现 collision-free hot tier 不稳定优于 hash，并观察到 gate credit assignment mismatch。
+因此我们的论文不能把“语义地址更合理”直接等同于“最终模型一定更好”；必须有 RQ-Shuffled、gate 使用和
+shared-row intervention。
+
+### Memory Grafting
+
+它把大模型 hidden states 离线构造成 frozen memory values，比较 MoE、vanilla Engram 和 grafted memory，
+并报告 grafting source layer、recipient compatibility、memory 大小和构建/推理成本。这说明后续工作必须明确
+区分 address quality、value quality 和 gate compatibility。
+
+### 对本工作的直接含义
+
+我们只修改 **address geometry**，value 仍由目标任务训练。因此主实验必须控制：
 
 ```text
-训练写入：事实/关系的一种表述 x
-测试读取：词面不同、语义等价的表述 x'
-要求：x' 通过相近 RQ 地址复用 x 已写入的 memory values
-同时：无关查询 z 不应因共享地址而被误伤
+相同 memory rows / embedding dim / gate / target layers / optimizer / updates
+唯一差别 = Arithmetic vs RQ-Shuffled vs Semantic-RQ addressing
 ```
 
-因此论文研究问题改为：
-
-> 在固定容量的 Engram 外部记忆中，Semantic-RQ 能否提高从已写入表达向未见释义、别名和关系模板的迁移，并量化这种结构化共享造成的 false transfer？
-
-这不是把 Engram 重新包装成通用知识编辑算法。知识编辑 benchmark 是测量“写入后如何寻址读取”最直接、最标准的实验载体。
+如果 value 学习失败或 gate 不使用 memory，再好的跨语言地址也不会产生收益。
 
 ---
 
-## 1. 从已有实验能提出什么假设
+## 2. 论文核心任务：跨语言知识写入，而不是跨语言分类
 
-旧结果不可作为最终证据，但其形状可用于预注册假设：
+### 2.1 主 benchmark
 
-- CounterFact：旧 RQ 在 0.6B/1.7B/4B/8B 的 efficacy 与 paraphrase 多数高于 Arithmetic，但 specificity 多数更低；
-- ZsRE：efficacy 基本饱和/持平，旧 RQ 的 specificity 在四个尺度均高于 Arithmetic；
-- WikiCF/WikiRecent：部分尺度上旧 RQ 提高 specificity，但不是全面领先；
-- MQuAKE 当前 loader 的 paraphrase=0、specificity=1 是构造值，不能用于方法判断；
-- PAWS-X：旧 matched Arithmetic macro 83.86%，旧 RQ 83.54%，没有正向结果；且旧 RQ 实现错误，两者差异不可解释；
-- XNLI：两 seed 差值变号，不能支持跨语言 claim。
-
-由此得到待验证而非既成结论的假设：
-
-> Semantic-RQ 的收益不是平均 LM 能力，而是 controllable sharing：更容易把一次写入迁移到语义等价表达；代价可能是近邻之间相互污染。
-
----
-
-## 2. 核心实验：标准知识编辑 benchmark
-
-### 2.1 Benchmark
-
-主表只使用有标准 efficacy / paraphrase / locality 定义的任务：
-
-| Benchmark | 主要作用 | 主指标 |
+| Benchmark | 角色 | 为什么合适 |
 |---|---|---|
-| CounterFact | 反事实写入与 paraphrase/generalization | Efficacy、Paraphrase、Neighborhood/Specificity |
-| ZsRE | QA 事实写入与多问法泛化 | Efficacy、Paraphrase、Specificity |
-| WikiRecent / KnowEdit-WikiRecent | 新知识持续写入 | Efficacy、Paraphrase、Locality |
-| MQuAKE | 多跳组合泛化 | 仅在修复标准多跳评测后进入；当前 loader 结果排除 |
+| **BabelEdits** | 第一主表 | 60 种语言、实体 aliases 质量高，同时测跨语言 edit effectiveness 与模型 robustness |
+| **MzsRE / Bi-ZsRE** | 第二主表 | 标准 multilingual factual editing；同一事实有跨语言问法 |
+| **MLaKE single-hop** | 复现表 | 英/中/日/法/德五语言，标准 single-hop 与 cross-lingual evaluation |
+| **WikiBigEdit** | 持续写入表 | ICML 2025 标准 lifelong knowledge editing，测大量真实更新与遗忘 |
 
-PAWS-X/XNLI 只做外部泛化附录，不承担主 claim。普通 FineWeb/WikiText PPL 只作为 retention
-和训练 sanity，不再先花三 seed × 12k steps 建主 checkpoint。
+CounterFact/ZsRE 单语版用于验证 canonical→paraphrase，放辅助主表。PAWS-X 与 XNLI 降为附录 task-transfer
+sanity，不用于证明 knowledge memory。
 
-### 2.2 方法对照
+### 2.2 核心协议
 
-| 方法 | 回答的问题 |
+对每个事实提供 source language `L_src` 的 canonical prompt 和 target answer：
+
+```text
+只训练 L_src canonical prompt → new target
+不训练任何 paraphrase 或其他语言
+
+测试：
+1. L_src canonical                edit efficacy
+2. L_src unseen paraphrase        monolingual generalization
+3. L_tgt parallel query           cross-lingual propagation
+4. L_tgt entity aliases           alias robustness
+5. unrelated facts/tasks          locality / model retention
+```
+
+主要设置：English→{de, es, fr, zh, ja, ko}；BabelEdits 再报告语言族和资源水平 aggregate。补一个
+非英语 source（zh→English/others），避免把“English encoder hubness”误认为通用跨语言能力。
+
+---
+
+## 3. 方法与公平基线
+
+### 3.1 必须进入主表
+
+| 方法 | 用途 |
 |---|---|
-| Base | 未写入前能力 |
-| LoRA | 写入共享神经参数的标准 PEFT 对照 |
-| Arithmetic-fixed | 相同容量、无语义结构的精确/随机寻址 |
-| RQ-Shuffled | 保留 code 频率和容量，破坏语义—地址对应关系 |
-| Semantic-RQ | 修正后的动态 encode → frozen RQ → cache |
+| Frozen Base | 写入前下限与 locality reference |
+| Full FT | 高干扰写入上界/成本对照，小规模报告 |
+| LoRA | 标准 PEFT 写入对照 |
+| Arithmetic-fixed Engram | 原始离散寻址；严格同容量 |
+| RQ-Shuffled Engram | 保持 RQ code 频率与容量，破坏语义映射 |
+| Semantic-RQ Engram | 我们的方法；动态 encode + frozen RQ + persistent cache |
 
-所有 Engram 方法严格匹配目标层、heads、每头 rows、embedding dim、可训练参数、训练 token、
-optimizer steps 和 checkpoint selection。RQ 对任何未见 n-gram 都必须现场编码并 cache，fallback rate 必须为 0。
+若工程允许，可加入一个成熟 KE 方法（ROME/MEMIT 或 EasyEdit 中对 Qwen 兼容的方法）作为任务领域基线；
+但它不替代 Arithmetic 和 RQ-Shuffled 两个方法因果基线。
 
-### 2.3 公平的写入协议
+### 3.2 公平约束
 
-每个 edit batch 只训练 canonical prompt + target answer，不把测试 paraphrase 放入训练。Backbone 冻结，
-只更新 Engram memory/gate；LoRA 使用相同监督 token 与梯度步数。使用官方 train/eval 字段和数据切分，
-不自行生成主测试集。
+- 同一 Qwen3-1.7B-Base；Gate A 后复现 Qwen3-4B；
+- backbone 对所有 Engram 方法完全冻结；
+- M=8、K=256 起步，2/3-gram、相同 target layers 和 embedding dim；
+- 相同可训练参数、batch、监督 token、optimizer steps、学习率搜索空间；
+- checkpoint 选择只看 source-language validation，不看目标语言；
+- RQ unseen n-gram 必须动态编码并立刻用于当前 forward，fallback=0；
+- 每种方法三个 seeds；逐事实 paired evaluation。
 
-至少报告三种 batch size：
+LoRA 参数量很难与 Engram 完全相同，因此同时报告：trainable parameters、实际 touched parameters、optimizer
+state、写入时间和峰值显存，不能只写“参数高效”。
+
+---
+
+## 4. Table 1：跨语言知识迁移（Semantic Hash 的主结果）
+
+每个 benchmark 报告：
+
+- Source efficacy / reliability；
+- Source paraphrase；
+- Target-language propagation macro；
+- Target alias robustness；
+- Locality / specificity；
+- Harmonic mean：防止用 locality 换 propagation；
+- Language consistency：同一事实在多语言答案是否一致。
+
+### Gate A：方法是否成立
+
+Semantic-RQ 必须满足：
+
+1. Source efficacy 不低于 Arithmetic-fixed；
+2. target-language propagation 同时优于 Arithmetic-fixed 和 RQ-Shuffled；
+3. locality 下降不超过预注册阈值，harmonic mean 仍领先；
+4. 至少 BabelEdits 与 MzsRE 两个 benchmark 方向一致；
+5. 三 seed paired bootstrap 95% CI 至少一个主比较排除 0；
+6. 不得只靠中文或只靠与英语相近的语言拉高 macro。
+
+若不通过，停止规模扩展。地址 overlap 很高不能挽救效果失败。
+
+---
+
+## 5. Table 2：持续写入（Engram 本体优势）
+
+使用 WikiBigEdit 或标准可复现的 sequential CounterFact protocol：
 
 ```text
-sequential / batch size ∈ {1, 10, 100}
+连续写入 N ∈ {1, 10, 100, 1k, 10k} facts
+每个阶段评估新事实、历史事实、paraphrase、跨语言查询和无关能力
 ```
 
-它们分别测单次写入、少量并发写入和 memory collision/interference。先用 0.6B 或 1.7B 做
-三 seed；只有结果通过 Gate A 才扩到 4B/8B。
+比较 LoRA、Arithmetic Engram、Semantic-RQ Engram：
 
-### 2.4 论文不能只报 E/P/S
+- current edit success；
+- previous-edit retention / forgetting curve；
+- cross-lingual retention；
+- locality；
+- 每个 edit 实际更新 rows 数；
+- 写入 wall time、峰值 GPU memory、optimizer state；
+- memory 增长和 cache storage。
 
-必须同时报告：
-
-- Edit Success / Efficacy：canonical prompt 是否写入成功；
-- Paraphrase Generalization：未训练释义能否读出同一 target；
-- Locality / Specificity：无关样本输出是否保持；
-- Harmonic score：防止只靠牺牲 locality 换 paraphrase；
-- Sequential retention：后续 edits 后，早期 edits 还剩多少；
-- time / peak GPU memory / persistent cache size / lookup latency。
-
-### Gate A：Semantic Hash 是否真的 work
-
-Semantic-RQ 必须同时满足：
-
-1. 在至少 CounterFact 和 ZsRE 两个标准 benchmark 上，paraphrase 显著优于 Arithmetic-fixed 与 RQ-Shuffled；
-2. canonical efficacy 不下降，或下降小于预注册容忍区间；
-3. locality 的损失没有抵消 paraphrase 收益，harmonic score 仍领先；
-4. 三 seed 方向一致，paired bootstrap 95% CI 至少一个核心比较排除 0；
-5. 动态 RQ 覆盖率 100%，没有 Arithmetic fallback。
-
-不满足时，主方法结论就是负结果，不能用地址 overlap 挽救。
+这里应该体现 Engram：backbone 不改、写入集中在离散 memory rows、旧知识受干扰范围受地址共享控制。
+Semantic-RQ 可能提高 transfer，也可能因共享增加 interference；论文必须诚实展示 Pareto frontier。
 
 ---
 
-## 3. 真正体现地址几何的标准切片
+## 6. Figure 1：容量—迁移—干扰曲线
 
-这些是 benchmark 内分析，不另造 benchmark：
-
-### 3.1 表面差异分桶
-
-对官方 paraphrase 按 canonical↔paraphrase 的 token Jaccard / edit distance 分桶。核心预期是：
-
-- exact/高词面重合：Arithmetic 与 Semantic-RQ 接近；
-- 低词面重合但 embedding 相似：Semantic-RQ 优势最大；
-- 低语义相似：不应发生正迁移。
-
-### 3.2 地址复用链路
-
-逐样本记录：
+只在 Gate A 通过后运行：
 
 ```text
-embedding cosine
-→ RQ code overlap（0…M heads）
-→ 与训练 prompt 共用且被更新的 rows 数量
-→ paraphrase gain / locality damage
+K ∈ {64, 256, 1024, 4096}
+M 固定为 8
+methods = Arithmetic-fixed / RQ-Shuffled / Semantic-RQ
 ```
 
-RQ-Shuffled 是关键反事实：如果它与 Semantic-RQ 表现相同，收益来自访问频率或容量，而不是语义几何。
+横轴 memory rows 或持久存储，纵轴同时画：
 
-### 3.3 干预而非相关性
+- cross-lingual propagation；
+- locality；
+- harmonic mean；
+- sequential retention；
+- 吞吐/首次 miss latency/热 cache latency。
 
-对产生 paraphrase gain 的共享 rows 做 reset/mask：若收益随共享 head 数单调消失，才支持因果解释。
-同时对语义相近但答案不同的 counterfactual neighbor 测 false transfer。
+合理预期不是 Semantic-RQ 永远胜出，而是小容量/长尾时结构化共享提高 transfer；容量扩大后随机碰撞减少，
+Arithmetic 差距缩小；Semantic-RQ 的 false sharing 可能形成 locality 上限。
 
----
-
-## 4. 第二主实验：持续写入与可迁移性
-
-按时间或随机顺序连续写入 WikiRecent/CounterFact edits，评估每 10/100/500 次写入后的：
-
-- 当前 edit efficacy；
-- 旧 edit retention；
-- paraphrase retention；
-- unrelated locality；
-- memory rows touched、collision rate 与写入吞吐。
-
-这个实验体现 Engram 相对 LoRA 的结构优势：知识值位于可寻址 memory，写入稀疏且可 offload；
-Semantic Hash 的额外贡献只限定为“让未见语义等价查询能够复用已写入 rows”。不能把 offload 本身归功于 Semantic Hash。
+这比单点 M8/K256 更能解释方法何时 work。
 
 ---
 
-## 5. 多语言实验的正确版本
+## 7. Figure 2：机制因果链
 
-英语训练 → PAWS-X/XNLI 测试并不能自动证明 memory value 跨语言迁移，因为不同语言 token pattern
-不同。若做多语言，只使用同一事实的平行查询（例如 multilingual ParaRel/ZsRE/CounterFact 资源）：
+### 7.1 逐事实地址复用
+
+对 source prompt 与 target-language parallel prompt 记录：
+
+- embedding cosine；
+- 每个 n-gram order、每个 RQ level 的 code overlap；
+- target query 访问 source 训练期间实际更新 rows 的比例；
+- gate activation；
+- target-language log-probability gain。
+
+“全局 unique row 是否见过”会因小 K 饱和，不能单独使用。主分析必须是**同一事实配对**的 aligned n-gram
+code overlap，以及访问频率/更新量加权 overlap。
+
+### 7.2 三个必要干预
+
+1. **RQ-Shuffled**：消除语义—地址对应，保留容量和访问频率；
+2. **Shared-row reset**：只重置 source/target 共享且在 source 写入时更新过的 rows；
+3. **Gate intervention**：固定/屏蔽 gate，判断地址几何是否被 gate 实际利用。
+
+支持论文的完整因果链是：
 
 ```text
-English canonical fact write
-→ English paraphrase read
-→ target-language parallel paraphrase read
+跨语言语义相似
+→ 更高 aligned code overlap
+→ 复用 source-updated rows
+→ 更高 target propagation
+→ shuffle 或 reset shared rows 后收益消失
 ```
 
-需要同时证明目标语言查询确实复用了英语训练时更新的 rows。若跨语言 embedding 相似但 code overlap
-仍低，或 overlap 与 accuracy gain 无关，就不能 claim multilingual portability。
-
-该实验在 Gate A 通过后再跑，不作为救场实验。
+若 gate 接近零或 shared-row reset 不影响收益，则准确率变化不能归因于 Semantic Engram。
 
 ---
 
-## 6. 四张 A100 的新执行顺序
+## 8. Table 3：效率与 Engram 系统属性
 
-### Phase 0：实现与审计（先完成）
+四张 A100 无法复现 CXL 系统论文，但可以给出可信的单机证据：
 
-- 修正后的动态 RQ：所有新 n-gram 在线 encode，首次访问 cache，fallback=0；
-- 使用 FAISS 官方 unpack/compute_codes；
-- 给 KE runner 增加 Arithmetic-fixed、RQ-Shuffled、Semantic-RQ；
-- 保存逐样本 canonical/paraphrase/locality 结果与 row-access trace；
-- 用 50 个 edits 做 correctness integration test，不作为论文结果。
+- 冷启动：Qwen embedding + RQ 首次地址生成 latency；
+- 热启动：SQLite/in-memory cache lookup latency；
+- cache hit rate 随请求数变化；
+- memory table 在 GPU、pinned CPU memory 下的 tokens/s 和 PCIe transfer；
+- table size 从 10M 到可容纳上限的模拟/真实扩展；
+- 相同 batch/sequence 下 Base、Arithmetic、Semantic cold、Semantic warm 的吞吐；
+- persistent cache 大小和构建 GPU-hours。
 
-### Phase 1：0.6B/1.7B 标准主实验
+必须明确：动态 Semantic Hash 的首次 miss 不再是原版 Engram 的纯 O(1) lookup；其系统 claim 是
+**amortized lookup after memoization**。论文要报告冷/热两条路径，不能只报热 cache。
 
-四卡并行方法，而不是三卡重复同一个 LM run：
+---
+
+## 9. 当前 PAWS-X 的正确位置
+
+正在运行的 PAWS-X English→7 languages 保留为 implementation diagnostic：
+
+- 能快速验证 strict dynamic RQ 是否可训练；
+- 能检查不同语言是否访问同一 rows；
+- 但它写入的是 paraphrase 分类规则，不是新事实；
+- 49k 训练样本可能覆盖几乎所有 M8/K256 rows，使全局 row reuse 饱和；
+- 因此不进入论文主表，也不决定论文方向。
+
+PAWS-X 完成后只回答“是否值得进入 BabelEdits pilot”，不能单独支撑跨语言 conditional memory claim。
+
+---
+
+## 10. 四卡执行计划
+
+### Phase 0：当前 PAWS-X 诊断
+
+- GPU0 Arithmetic-fixed；GPU1 Semantic-RQ；GPU2 LoRA；GPU3 保留非项目进程；
+- 只跑 seed42；完成后不自动补三 seed；
+- 检查 accuracy、逐语言 paired row reuse、gate 与 cold/warm cost。
+
+### Phase 1：BabelEdits/MzsRE pilot
+
+先 500–1,000 edits、seed42：
 
 ```text
-GPU0  Arithmetic-fixed
-GPU1  RQ-Shuffled
-GPU2  Semantic-RQ
-GPU3  LoRA / Base evaluation
+GPU0 Arithmetic-fixed
+GPU1 RQ-Shuffled
+GPU2 Semantic-RQ
+GPU3 LoRA 或成熟 KE baseline
 ```
 
-先 CounterFact seed42，再 ZsRE seed42。看到完整 E/P/locality 与逐样本结果后执行 Gate A；通过后补
-seed43/44，未通过则停止扩模型。
+必须跑完整 source efficacy、cross-lingual propagation、locality 和逐事实 trace。该 pilot 是 correctness +
+effect-size estimation，不写论文最终数字。
 
-### Phase 2：持续写入
+### Phase 2：主表
 
-只对 Gate A 中最强的两个 Engram 方法与 LoRA 跑 sequential edits，测 retention 和 interference 曲线。
+若 pilot 中 Semantic-RQ 对两个 Engram 对照有至少 2 pp target macro 改善，且 locality 可接受：
 
-### Phase 3：规模与多语言
+- BabelEdits + MzsRE 全量；
+- seeds 42/43/44；
+- 单卡独立 run，四卡持续排队；
+- paired bootstrap 和语言族 aggregate。
 
-只有 Phase 1/2 正向才扩 4B/8B，并选择一个平行事实 benchmark 验证跨语言 row reuse。
+### Phase 3：持续写入
+
+- WikiBigEdit N={10,100,1k,10k}；
+- LoRA / Arithmetic / Semantic；
+- 每阶段保存 retention、跨语言传播和资源曲线。
+
+### Phase 4：规模、容量与系统
+
+- 只复现最强设置到 Qwen3-4B；
+- K sweep 先 seed42，再补显著点；
+- CPU offload 与 cold/warm cache benchmark。
 
 ---
 
-## 7. 当前有效结论与无效结论
+## 11. 论文主表和主图
 
-### 当前有效
+1. **Table 1 — Cross-lingual Knowledge Write/Read**：BabelEdits、MzsRE；
+2. **Table 2 — Lifelong Knowledge Injection**：WikiBigEdit retention/locality；
+3. **Table 3 — Efficiency and Storage**：写入成本、touched rows、冷/热 latency、offload；
+4. **Figure 1 — Capacity–Transfer–Interference Frontier**；
+5. **Figure 2 — Paired Address Reuse and Causal Intervention**；
+6. **Appendix**：PAWS-X、XNLI、单语 CounterFact/ZsRE、更多语言/seed。
 
-- 修正后的 lazy RQ 能对任意新 n-gram 计算 8-level code 并立即用于当前 forward，cache 后可复用；
-- 旧静态表 + fallback 实现没有测试我们真正提出的 semantic generalization；
-- 普通 LM-CPT 不是验证 Semantic Hash 优势的高辨识度主任务；
-- 旧结果仅提示可能存在 paraphrase–specificity trade-off，需要标准重跑。
+---
 
-### 当前尚不能声称
+## 12. 当前允许和禁止的结论
 
-- Semantic-RQ 优于 Arithmetic；
-- Semantic-RQ 提高多语言泛化；
-- Semantic-RQ 提高通用 LM benchmark；
-- Semantic-RQ 保持 locality 或减少遗忘；
-- 旧知识编辑、PAWS-X、XNLI 的任何 RQ 数字是正式结果。
+### 当前允许
 
-论文是否成立，取决于修正实现下的标准 KE 主表与 transfer–interference 曲线。
+- 修正后的 Semantic-RQ 能为未见 n-gram 动态生成 frozen RQ 地址并 cache；
+- 旧 RQ 结果因 fallback 和 code 解码错误全部无效；
+- 原版 Engram 的优势需要通过容量、知识存储、稀疏更新和系统属性体现；
+- PAWS-X 只是诊断，跨语言事实写入 benchmark 才是方法主场。
+
+### 当前禁止
+
+- Semantic-RQ 已提高跨语言泛化；
+- Semantic-RQ 已优于 Arithmetic；
+- 动态 Semantic-RQ 保持原版 Engram 的严格零额外计算/O(1) 冷路径；
+- Engram 的 offload、可扩展性是 Semantic Hash 新贡献；
+- 单 seed PAWS-X 或旧知识编辑表可以作为论文结果。
+
+最终 go/no-go 由 BabelEdits/MzsRE 的跨语言 propagation、locality 和 shared-row 因果干预共同决定。
