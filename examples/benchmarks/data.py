@@ -135,6 +135,66 @@ def _load_counterfact(subset_size: int, eval_size: int, seed: int = 42) -> tuple
     return Dataset.from_list(train_rows), Dataset.from_list(eval_rows)
 
 
+def _load_counterfact_canonical(
+    subset_size: int, eval_size: int, seed: int = 42
+) -> tuple[Any, Any]:
+    """Full batch-edit protocol: train only canonical rewrites from CounterFact test.
+
+    Paraphrase, neighborhood, and generation prompts are deliberately excluded and
+    remain evaluation-only. ``subset_size`` caps cases, not expanded sentences.
+    """
+    del seed
+    cases = load_dataset("azhx/counterfact", split="test")
+    if subset_size > 0:
+        cases = cases.select(range(min(subset_size, len(cases))))
+    rows = []
+    for example in cases:
+        rewrite = example["requested_rewrite"]
+        prompt = rewrite["prompt"].format(rewrite["subject"])
+        rows.append(
+            {
+                "text": f"{prompt} {rewrite['target_new']['str']}",
+                "prompt": prompt,
+                "target": str(rewrite["target_new"]["str"]),
+            }
+        )
+    train = Dataset.from_list(rows)
+    validation = Dataset.from_list(rows[: min(eval_size, len(rows))])
+    print(
+        f"CounterFact canonical-only batch edit: {len(train)} edits; "
+        "paraphrases/neighborhoods excluded from training."
+    )
+    return train, validation
+
+
+def _load_zsre_canonical(
+    subset_size: int, eval_size: int, seed: int = 42
+) -> tuple[Any, Any]:
+    """KnowEdit ZsRE test edits, canonical prompt only; rephrases/locality held out."""
+    del seed
+    import json
+
+    path = "data/zsre/benchmark/ZsRE/ZsRE-test-all.json"
+    cases = json.load(open(path, encoding="utf-8"))
+    if subset_size > 0:
+        cases = cases[: min(subset_size, len(cases))]
+    rows = [
+        {
+            "text": f"{case['prompt']} {case['target_new']}",
+            "prompt": str(case["prompt"]),
+            "target": str(case["target_new"]),
+        }
+        for case in cases
+    ]
+    train = Dataset.from_list(rows)
+    validation = Dataset.from_list(rows[: min(eval_size, len(rows))])
+    print(
+        f"ZsRE canonical-only batch edit: {len(train)} edits; "
+        "rephrases/locality excluded from training."
+    )
+    return train, validation
+
+
 def prepare_dataset(
     tokenizer: PreTrainedTokenizerBase,
     subset_size: int,
@@ -153,18 +213,55 @@ def prepare_dataset(
         # Use the pre-built JSONL (data/counterfact/corpus_train.jsonl: 118k sentences from 19728 cases).
         # subset_size here is in SENTENCES (not cases); set big to use full corpus.
         train_ds, val_ds = _load_jsonl_corpus("data/counterfact/corpus_train.jsonl", subset_size, eval_size, seed=seed)
+    elif dataset == "counterfact_canonical":
+        train_ds, val_ds = _load_counterfact_canonical(
+            subset_size, eval_size, seed=seed
+        )
     elif dataset == "wiki_recent":
         train_ds, val_ds = _load_jsonl_corpus("data/wiki_recent/corpus_train.jsonl", subset_size, eval_size, seed=seed)
     elif dataset == "wiki_cf":
         train_ds, val_ds = _load_jsonl_corpus("data/wiki_cf/corpus_train.jsonl", subset_size, eval_size, seed=seed)
     elif dataset == "zsre":
         train_ds, val_ds = _load_zsre(subset_size, eval_size, seed=seed)
+    elif dataset == "zsre_canonical":
+        train_ds, val_ds = _load_zsre_canonical(subset_size, eval_size, seed=seed)
     elif dataset == "mquake":
         train_ds, val_ds = _load_mquake(subset_size, eval_size, seed=seed)
     else:
         train_ds, val_ds = _load_tinystories(subset_size, eval_size)
 
     def tokenize_function(examples: dict[str, Any]) -> dict[str, Any]:
+        if "prompt" in examples and "target" in examples:
+            input_rows: list[list[int]] = []
+            attention_rows: list[list[int]] = []
+            label_rows: list[list[int]] = []
+            pad_id = tokenizer.pad_token_id
+            if pad_id is None:
+                pad_id = tokenizer.eos_token_id
+            if pad_id is None:
+                raise ValueError("tokenizer needs a pad or EOS token")
+            for prompt, target in zip(
+                examples["prompt"], examples["target"], strict=True
+            ):
+                prompt_ids = tokenizer(
+                    str(prompt), add_special_tokens=True
+                )["input_ids"]
+                target_ids = tokenizer(
+                    " " + str(target).strip(), add_special_tokens=False
+                )["input_ids"]
+                prompt_ids = prompt_ids[: max(0, max_length - len(target_ids))]
+                target_ids = target_ids[: max_length - len(prompt_ids)]
+                ids = list(prompt_ids) + list(target_ids)
+                labels = [-100] * len(prompt_ids) + list(target_ids)
+                padding = max_length - len(ids)
+                input_rows.append(ids + [int(pad_id)] * padding)
+                attention_rows.append([1] * len(ids) + [0] * padding)
+                label_rows.append(labels + [-100] * padding)
+            return {
+                "input_ids": input_rows,
+                "attention_mask": attention_rows,
+                "labels": label_rows,
+            }
         tokenized = tokenizer(
             examples["text"],
             truncation=True,
@@ -177,9 +274,15 @@ def prepare_dataset(
 
     print(f"Tokenizing with {num_proc} processes...")
     train_dataset = train_ds.map(
-        tokenize_function, batched=True, remove_columns=["text"], num_proc=num_proc
+        tokenize_function,
+        batched=True,
+        remove_columns=list(train_ds.column_names),
+        num_proc=num_proc,
     )
     eval_dataset = val_ds.map(
-        tokenize_function, batched=True, remove_columns=["text"], num_proc=num_proc
+        tokenize_function,
+        batched=True,
+        remove_columns=list(val_ds.column_names),
+        num_proc=num_proc,
     )
     return train_dataset, eval_dataset
