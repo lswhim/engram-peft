@@ -1613,6 +1613,16 @@ def render(snapshot: dict[str, Any]) -> str:
     shuffled43_wiki = standard_metric(
         shuffled43, "wikitext", ("word_perplexity,none", "word_perplexity")
     )
+    shuffled43_lambada_acc = standard_metric(
+        shuffled43, "lambada_openai", ("acc,none", "acc")
+    )
+    semantic43 = snapshot.get("standard_lm", {}).get("semantic_rq_seed43", {})
+    semantic43_wiki = standard_metric(
+        semantic43, "wikitext", ("word_perplexity,none", "word_perplexity")
+    )
+    semantic43_lambada_acc = standard_metric(
+        semantic43, "lambada_openai", ("acc,none", "acc")
+    )
     if all(
         value is not None
         for value in (
@@ -1632,7 +1642,26 @@ def render(snapshot: dict[str, Any]) -> str:
             f"{semantic42_lambada_acc:.2%} / Arithmetic {arithmetic42_lambada_acc:.2%} / "
             f"Shuffled {shuffled42_lambada_acc:.2%}。Semantic 未同时击败两个对照。"
         )
-        if shuffled43_wiki is not None:
+        if all(
+            value is not None
+            for value in (
+                arithmetic43_wiki,
+                shuffled43_wiki,
+                semantic43_wiki,
+                arithmetic43_lambada_acc,
+                shuffled43_lambada_acc,
+                semantic43_lambada_acc,
+            )
+        ):
+            public_verdict = "两个 seed、两个公开任务均否定核心假设"
+            public_detail += (
+                f" Seed43 再现：WikiText Semantic {semantic43_wiki:.3f} / Arithmetic "
+                f"{arithmetic43_wiki:.3f} / Shuffled {shuffled43_wiki:.3f}；LAMBADA "
+                f"Semantic {semantic43_lambada_acc:.2%} / Arithmetic "
+                f"{arithmetic43_lambada_acc:.2%} / Shuffled {shuffled43_lambada_acc:.2%}，"
+                "三者仍均劣于 Base。"
+            )
+        elif shuffled43_wiki is not None:
             public_detail += (
                 f" Shuffled WikiText 已跨 seed 复现：seed42 {shuffled42_wiki:.3f} / "
                 f"seed43 {shuffled43_wiki:.3f}，均劣于 Base。"
