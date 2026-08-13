@@ -1512,7 +1512,20 @@ def render(snapshot: dict[str, Any]) -> str:
         )
     else:
         gate_b_verdict = f"Seed42 {len(gate_b_seed42)}/4 完成"
-        if "base" in gate_b_seed42:
+        if "base" in gate_b_seed42 and "semantic_rq" in gate_b_seed42:
+            base_gate_b = gate_b_seed42["base"]
+            semantic_gate_b = gate_b_seed42["semantic_rq"]
+            qqp_delta = semantic_gate_b["qqp"] - base_gate_b["qqp"]
+            wiki_delta = semantic_gate_b["wiki"] - base_gate_b["wiki"]
+            gate_b_verdict = "Seed42 暂不支持 OOD 泛化"
+            gate_b_detail = (
+                f"Semantic vs Base：QQP Acc {semantic_gate_b['qqp']:.2%} vs "
+                f"{base_gate_b['qqp']:.2%}（{qqp_delta:+.2%}），PAWS-Wiki Acc "
+                f"{semantic_gate_b['wiki']:.2%} vs {base_gate_b['wiki']:.2%}"
+                f"（{wiki_delta:+.2%}）。内域略升但 OOD 明显下降；仍需 "
+                "Arithmetic、Shuffled 与 seed43/44 判断原因和稳定性。"
+            )
+        elif "base" in gate_b_seed42:
             gate_b_detail = (
                 f"Base：QQP Acc {gate_b_seed42['base']['qqp']:.2%}，"
                 f"PAWS-Wiki Acc {gate_b_seed42['base']['wiki']:.2%}。"
