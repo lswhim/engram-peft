@@ -113,7 +113,10 @@ class EngramDataCollator(DataCollatorForLanguageModeling):
         # Lazy semantic RQ must resolve first-seen n-grams in the main process. Doing
         # this in DataLoader workers would load one embedding model per worker and
         # cannot safely maintain a shared persistent cache.
-        if self.config.hash_backend == "rq":
+        # These backends own specialized runtime mappers in EngramModel. The
+        # legacy collator only has NgramHashMapping and must not silently
+        # override RQ or FixedNgramHashMapping indices with legacy hashes.
+        if self.config.hash_backend in {"rq", "arithmetic_fixed"}:
             return batch
 
         # Step 2: Handle tokenizer compression if enabled and compressor is provided

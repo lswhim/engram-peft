@@ -30,3 +30,18 @@ def test_engram_collator_preserves_dataset_label_mask() -> None:
     features = [{"input_ids": [7, 8, 9, 0], "attention_mask": [1, 1, 1, 0], "labels": [-100, -100, 9, -100]}]
     batch = collator(features)
     assert batch["labels"].tolist() == [[-100, -100, 9, -100]]
+
+
+def test_fixed_backend_does_not_inject_legacy_hash_indices() -> None:
+    collator = EngramDataCollator.__new__(EngramDataCollator)
+    collator.tokenizer = TinyTokenizer()
+    collator.mlm = False
+    collator.return_tensors = "pt"
+    collator.pad_to_multiple_of = None
+    collator.tf_experimental_compile = False
+    collator.seed = None
+    collator.generator = None
+    collator.config = SimpleNamespace(hash_backend="arithmetic_fixed")
+    features = [{"input_ids": [7, 8, 9, 0], "attention_mask": [1, 1, 1, 0], "labels": [-100, -100, 9, -100]}]
+    batch = collator(features)
+    assert "engram_hash_indices" not in batch
