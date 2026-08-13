@@ -1341,7 +1341,44 @@ def render(snapshot: dict[str, Any]) -> str:
             f"<td>{orders.get('3', {}).get('total_accesses', '—')}</td>"
             f"<td>{'是' if preserved else '等待'}</td></tr>"
         )
-    conclusion_html = "".join(f"<li>{html.escape(item)}</li>" for item in conclusions(snapshot))
+    completed_standard_rows = []
+    for method in ("base", *STANDARD_METHODS):
+        seeds = (42,) if method == "base" else GATE1_SEEDS
+        for seed in seeds:
+            payload = snapshot.get("standard_lm", {}).get(f"{method}_seed{seed}", {})
+            if payload.get("status") != "complete":
+                continue
+            completed_standard_rows.append(
+                f"<tr><th>{labels[method]}</th><td>{seed}</td>"
+                f"<td>{fmt(standard_metric(payload, 'paloma_wikitext_103', ('word_perplexity,none', 'word_perplexity')), 3)}</td>"
+                f"<td>{fmt(standard_metric(payload, 'paloma_c4_en', ('word_perplexity,none', 'word_perplexity')), 3)}</td>"
+                f"<td>{fmt(standard_metric(payload, 'lambada_openai', ('acc,none', 'acc')), 4)}</td>"
+                f"<td>{fmt(standard_metric(payload, 'lambada_openai', ('perplexity,none', 'perplexity')), 3)}</td></tr>"
+            )
+    standard_body = "".join(completed_standard_rows) or (
+        '<tr><td colspan="6" class="empty">等待公平 matched checkpoints 完成；完成后立即运行公开 LM benchmark。</td></tr>'
+    )
+    xnli = snapshot.get("external", {}).get("xnli", {})
+    arithmetic_xnli = [
+        xnli.get("corrected_matched_seed42"),
+        xnli.get("corrected_matched_seed43"),
+    ]
+    semantic_xnli = [xnli.get("rq_seed42"), xnli.get("rq_seed43")]
+    xnli_pairs = [
+        (float(a), float(s))
+        for a, s in zip(arithmetic_xnli, semantic_xnli, strict=True)
+        if isinstance(a, int | float) and isinstance(s, int | float)
+    ]
+    if len(xnli_pairs) == 2:
+        arithmetic_xnli_mean = statistics.mean(a for a, _ in xnli_pairs)
+        semantic_xnli_mean = statistics.mean(s for _, s in xnli_pairs)
+        xnli_delta = 100 * (semantic_xnli_mean - arithmetic_xnli_mean)
+        xnli_summary = (
+            f"Arithmetic-fixed {arithmetic_xnli_mean:.3%} · Semantic-RQ {semantic_xnli_mean:.3%} · "
+            f"Δ {xnli_delta:+.3f} pp · 两 seed 方向变号，结论：持平"
+        )
+    else:
+        xnli_summary = "尚无完整公平对照"
     active_rows = "".join(
         f'<tr><th>GPU {html.escape(str(job["gpu"]))}</th>'
         f'<td>{html.escape(job["script"])}</td>'
@@ -1356,33 +1393,17 @@ def render(snapshot: dict[str, Any]) -> str:
     ) or '<tr><td colspan="8">没有检测到实验进程</td></tr>'
     refresh = "" if snapshot["all_complete"] else '<meta http-equiv="refresh" content="15">'
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">{refresh}
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic-RQ Paper Lab</title>
-<style>:root{{--bg:#071018;--panel:#0d1c28;--line:#20394a;--text:#edf7fb;--muted:#8eabb9;--cyan:#52d6df;--green:#55d69e;--amber:#ffc66d;--red:#ff7185}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 15% 0,#11364b,transparent 32%),var(--bg);color:var(--text);font:14px/1.5 system-ui,"PingFang SC",sans-serif}}main{{max-width:1450px;margin:auto;padding:34px 24px 70px}}h1{{margin:0;font-size:34px}}.lead{{color:var(--muted);margin:5px 0 22px}}h2{{margin:32px 0 12px}}.gpus{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column}}.card span{{color:var(--muted)}}.card strong{{font-size:25px;color:var(--cyan)}}.box{{background:rgba(13,28,40,.94);border:1px solid var(--line);border-radius:14px;overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:820px}}th,td{{padding:12px 14px;border-bottom:1px solid var(--line);text-align:right}}th:first-child{{text-align:left}}thead th{{color:var(--muted)}}.pill{{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700}}.done{{color:var(--green);background:#55d69e22}}.run{{color:var(--cyan);background:#52d6df22}}.wait{{color:var(--amber);background:#ffc66d20}}.fail{{color:var(--red);background:#ff718522}}.invalid{{color:#748b96;text-decoration:line-through}}.conclusions{{background:#0c2030;border-left:4px solid var(--cyan);padding:14px 20px;border-radius:8px}}li{{margin:8px 0}}code{{color:var(--cyan)}}@media(max-width:800px){{.gpus{{grid-template-columns:repeat(2,1fr)}}}}</style></head>
-<body><main><h1>Semantic-RQ Paper Lab</h1><div class="lead">Gate 0 地址诊断 → Gate 1 受控语言建模 → One-pass → Capacity → 外部验证 · 更新于 {html.escape(snapshot['updated_at'])}</div>
-<div class="gpus">{gpu_cards}</div><h2>当前运行任务</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>阶段</th><th>Step</th><th>Train loss</th><th>主 PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
-<h2>Gate 0 · 地址结构诊断</h2><div class="box"><table><thead><tr><th>Order</th><th>ρ(语义, RQ overlap)</th><th>ρ(语义, Shuffled)</th><th>低词面高语义 RQ overlap</th><th>Shuffled overlap</th><th>Held-out coverage</th><th>切片 pairs</th></tr></thead><tbody>{''.join(diagnostic_rows)}</tbody></table></div>
-<h2>主对照 · Frequency-matched RQ-Shuffled 审计</h2><div class="box"><table><thead><tr><th>Seed / Order</th><th>全表 moved</th><th>已访问 rows moved</th><th>行数 histogram</th><th>访问加权 histogram</th><th>同频 singleton rows</th></tr></thead><tbody>{''.join(shuffle_rows)}</tbody></table></div>
-<h2>公平容量审计</h2><div class="box"><table><thead><tr><th>地址方法</th><th>Layer 11 · 2gram</th><th>Layer 11 · 3gram</th><th>Layer 21 · 2gram</th><th>Layer 21 · 3gram</th><th>可训练参数</th><th>主表资格</th></tr></thead><tbody>
-<tr><th>Semantic-RQ (M8,K256)</th><td>2048</td><td>2048</td><td>2048</td><td>2048</td><td>26,984,448</td><td><span class="pill done">是</span></td></tr>
-<tr><th>Arithmetic-fixed (8×256)</th><td>2048</td><td>2048</td><td>2048</td><td>2048</td><td>26,984,448</td><td><span class="pill done">是</span></td></tr>
-<tr><th>Legacy prime arithmetic</th><td>2194</td><td>2612</td><td>3000</td><td>3396</td><td>不匹配</td><td><span class="pill fail">否</span></td></tr>
-</tbody></table></div><h2>Gate 1 · FineWeb-Edu 100M processed-token-slot fixedsteps（Seed 42）</h2><div class="box"><table><thead><tr><th>方法</th><th>状态</th><th>最近 train loss</th><th>中间/最终 Eval loss ↓</th><th>峰值显存 GB</th><th>秒/step</th><th>实际 causal targets</th></tr></thead><tbody>{''.join(gate_rows)}</tbody></table></div>
-<h2>旧 Early-stop 诊断（不进入主表）</h2><div class="box"><table><thead><tr><th>方法</th><th>状态</th><th>实际 steps</th><th>Eval loss</th></tr></thead><tbody>{''.join(legacy_rows)}</tbody></table></div>
-<h2>Gate 1 · 三 Seed 复现矩阵（完成 {snapshot['complete_gate1_total']}/12）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(replication_rows)}</tbody></table></div>
-<h2>LM 因果切片 Manifest · 2,000 held-out rows（完成 {snapshot['complete_slice_manifests']}/3）</h2><div class="box"><table><thead><tr><th>数据切分</th><th>状态</th><th>2g exact</th><th>2g semantic</th><th>2g covered/no-neighbor</th><th>2g OOV</th><th>3g exact</th><th>3g semantic</th><th>3g covered/no-neighbor</th><th>3g OOV</th></tr></thead><tbody>{''.join(manifest_rows)}</tbody></table></div>
-<h2>逐 Token NLL（完成 {snapshot['complete_lm_slices']}/15）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(slice_rows)}</tbody></table></div>
-<h2>Paired Cluster Bootstrap（ΔNLL = Semantic-RQ − Control）</h2><div class="box"><table><thead><tr><th>比较</th><th>切片</th><th>ΔNLL ↓</th><th>95% CI</th><th>Tokens</th></tr></thead><tbody>{''.join(comparison_rows) or '<tr><td colspan="5">等待三 seed 逐 token loss</td></tr>'}</tbody></table></div>
-<h2>Shared-head 因果干预（完成 {snapshot['complete_head_interventions']}/6）</h2><div class="box"><table><thead><tr><th>比较</th><th>切片</th><th>ΔNLL</th><th>95% CI</th><th>Tokens</th></tr></thead><tbody>{''.join(intervention_rows) or '<tr><td colspan="5">等待 shared/random-matched masking</td></tr>'}</tbody></table></div>
-<h2>标准 LM Benchmark（完成 {snapshot['complete_standard_lm']}/10）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed</th><th>状态</th><th>Paloma WikiText-103 word PPL ↓</th><th>Paloma C4 word PPL ↓</th><th>LAMBADA Acc ↑</th><th>LAMBADA PPL ↓</th></tr></thead><tbody>{''.join(standard_rows)}</tbody></table></div>
-<h2>Phase 2 · One-pass Replication（Gate: {phase2_status}）</h2><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(phase2_rows)}</tbody></table></div>
-<h2>Finite-memory Capacity Sweep · 训练矩阵</h2><div class="box"><table><thead><tr><th>每 head 容量</th><th>方法</th><th>状态</th><th>Eval loss ↓</th><th>峰值显存 GB</th></tr></thead><tbody>{''.join(capacity_rows)}</tbody></table></div>
-<h2>Finite-memory Capacity Sweep · Paired ΔNLL</h2><div class="box"><table><thead><tr><th>每 head 容量</th><th>比较</th><th>Overall ΔNLL ↓</th><th>95% CI</th><th>3g semantic/shared ΔNLL ↓</th><th>95% CI</th></tr></thead><tbody>{''.join(capacity_comparison_rows)}</tbody></table></div>
-<h2>外部验证 · Benchmark-specific Frequency Audit</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>访问统计</th><th>2g accesses</th><th>3g accesses</th><th>3 seeds 加权 histogram 保持</th></tr></thead><tbody>{''.join(external_access_rows)}</tbody></table></div>
-<h2>外部验证 · 三 Seed Macro Accuracy</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th><th>Mean</th><th>Std</th></tr></thead><tbody>{''.join(external_triad_rows)}</tbody></table></div>
-<h2>外部验证 · 历史诊断（不承担主结论）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>Arithmetic s42</th><th>RQ s42</th><th>RQ s43</th><th>旧 matched s42（无效）</th><th>修正 matched s42</th><th>修正 matched s43</th></tr></thead><tbody>{''.join(ext_rows)}</tbody></table></div>
-<h2>当前可写结论</h2><ul class="conclusions">{conclusion_html}</ul>
-<p class="lead">公平口径：每个 n-gram order 为 8 heads × 256 rows/head = 2048 rows；正式 RQ-Shuffled 只在 LM-train 精确同访问频率组内置换完整 code vector，因此同时保持逐层行数和实际 access-weighted 桶负载，只破坏 n-gram↔语义地址对应。</p>
-<p class="lead">数据隔离：FineWeb-Edu 流的前 5,000 篇只用于离线建表；LM train/eval 固定跳过前 6,000 行后才 shuffle 和切分，地址语料与评测语料不重叠。</p></main></body></html>'''
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic Hash · Benchmark Lab</title>
+<style>:root{{--paper:#f3f0e8;--ink:#17201d;--muted:#68716c;--card:#fffdf8;--line:#d8d3c7;--green:#176b4d;--blue:#235ca5;--amber:#9a6015;--red:#a43636}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 Inter,ui-sans-serif,system-ui,"PingFang SC",sans-serif}}main{{max-width:1320px;margin:auto;padding:38px 24px 80px}}header{{display:flex;justify-content:space-between;gap:24px;align-items:end;border-bottom:2px solid var(--ink);padding-bottom:18px}}h1{{font-family:Georgia,serif;font-size:38px;line-height:1;margin:0}}h2{{font-size:20px;margin:34px 0 11px}}.kicker{{text-transform:uppercase;letter-spacing:.14em;color:var(--green);font-weight:800;font-size:12px}}.meta,.muted{{color:var(--muted)}}.verdicts,.gpus{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}}.verdict{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:17px;min-height:122px}}.verdict.primary{{border-top:4px solid var(--green)}}.verdict b{{display:block;font-size:13px;margin-bottom:9px}}.verdict strong{{font-family:Georgia,serif;font-size:23px;line-height:1.12}}.gpu{{background:#1d2924;color:#f8f5ec;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center}}.gpu span{{color:#b9c7c0}}.gpu strong{{font-size:23px}}.box{{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}th,td{{padding:11px 13px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}}th:first-child,td:first-child{{text-align:left}}thead th{{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#f7f4ed}}.pill{{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800}}.done{{color:var(--green);background:#dcefe6}}.run{{color:var(--blue);background:#e2ebf8}}.wait{{color:var(--amber);background:#f6ead7}}.fail{{color:var(--red);background:#f6dddd}}.empty{{text-align:center!important;color:var(--muted);padding:26px}}details{{margin-top:24px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px}}summary{{cursor:pointer;font-weight:800}}code{{color:var(--blue)}}@media(max-width:900px){{.verdicts,.gpus{{grid-template-columns:repeat(2,1fr)}}header{{display:block}}}}</style></head>
+<body><main><header><div><div class="kicker">Benchmark-first · live report</div><h1>Semantic Hash for Engram</h1><div class="meta">公开 benchmark 先判生死，机制实验后置</div></div><div class="meta">更新于 {html.escape(snapshot['updated_at'])}<br>自动刷新：15 秒</div></header>
+<section class="verdicts"><div class="verdict primary"><b>当前总判断</b><strong>尚无公开 benchmark 正向结论</strong><p class="muted">地址几何成立，但实际收益等待 Gate A / Gate B。</p></div><div class="verdict"><b>XNLI 附录诊断</b><strong>基本持平</strong><p class="muted">{html.escape(xnli_summary)}</p></div><div class="verdict"><b>地址几何</b><strong>结构信号明确</strong><p class="muted">2g ρ=.738 vs .006；3g ρ=.699 vs −.011。不能替代 benchmark。</p></div><div class="verdict"><b>下一决策点</b><strong>标准 LM Gate A</strong><p class="muted">WikiText-103、C4/Paloma、LAMBADA、FineWeb held-out。</p></div></section>
+<h2>四卡资源</h2><div class="gpus">{''.join(f'<div class="gpu"><div><b>GPU {g["index"]}</b><br><span>{g["used_mib"]}/{g["total_mib"]} MiB</span></div><strong>{g["util"]}%</strong></div>' for g in snapshot['gpus'])}</div>
+<h2>正在运行</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>阶段</th><th>Step</th><th>Loss</th><th>PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
+<h2>公平 Matched Checkpoints · 三 Seed</h2><p class="muted">只有跑满 12,208 steps 的结果有资格进入 benchmark；中间 loss 不做方法横向比较。</p><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(replication_rows)}</tbody></table></div>
+<h2>Gate A · 标准语言建模 Benchmark</h2><p class="muted">第一主表。Semantic-RQ 必须同时优于 Arithmetic-fixed 与 RQ-Shuffled，且至少两个公开 benchmark 方向一致。</p><div class="box"><table><thead><tr><th>方法</th><th>Seed</th><th>WikiText-103 PPL ↓</th><th>C4/Paloma PPL ↓</th><th>LAMBADA Acc ↑</th><th>LAMBADA PPL ↓</th></tr></thead><tbody>{standard_body}</tbody></table></div>
+<h2>Gate B · QQP → PAWS-QQP</h2><div class="box"><table><thead><tr><th>公开协议</th><th>方法</th><th>Seeds</th><th>主指标</th><th>状态</th></tr></thead><tbody><tr><th>QQP in-domain</th><td>Base / Arithmetic / Shuffled / Semantic</td><td>42,43,44</td><td>Accuracy / F1</td><td><span class="pill wait">Gate A checkpoint 后启动</span></td></tr><tr><th>QQP → PAWS-QQP</th><td>同一 QQP checkpoint</td><td>42,43,44</td><td>Accuracy / F1 / AUROC</td><td><span class="pill wait">等待</span></td></tr></tbody></table></div>
+<details><summary>附录证据：地址几何与公平性</summary><h2>地址结构诊断</h2><div class="box"><table><thead><tr><th>Order</th><th>ρ(semantic,RQ)</th><th>ρ(semantic,shuffle)</th><th>低词面高语义 overlap</th><th>shuffle overlap</th><th>coverage</th><th>pairs</th></tr></thead><tbody>{''.join(diagnostic_rows)}</tbody></table></div><h2>容量公平性</h2><div class="box"><table><thead><tr><th>方法</th><th>Rows/order</th><th>可训练参数</th><th>资格</th></tr></thead><tbody><tr><th>Semantic-RQ M8,K256</th><td>2048</td><td>26,984,448</td><td><span class="pill done">有效</span></td></tr><tr><th>Arithmetic-fixed 8×256</th><td>2048</td><td>26,984,448</td><td><span class="pill done">有效</span></td></tr><tr><th>旧 arithmetic/matched-v2</th><td>不匹配</td><td>不匹配</td><td><span class="pill fail">永久排除</span></td></tr></tbody></table></div></details>
+<p class="muted" style="margin-top:28px">判死规则：若标准 LM 与 QQP→PAWS 两条主线均不优于两个公平基线，则停止扩规模；不使用自建 slice 或地址相关性包装成方法收益。</p></main></body></html>'''
 
 
 def main() -> None:
