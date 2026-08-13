@@ -167,9 +167,18 @@ def conclusions(root: Path) -> str:
         if b and a and l:
             bm,am,lm=b['metrics'],a['metrics'],l['metrics']
             items.append(f'<li><b>{label}：</b>Base→Arithmetic→LoRA 的 efficacy 为 {100*bm["efficacy"]:.2f}→{100*am["efficacy"]:.2f}→{100*lm["efficacy"]:.2f}，paraphrase 为 {100*bm["paraphrase"]:.2f}→{100*am["paraphrase"]:.2f}→{100*lm["paraphrase"]:.2f}，specificity 为 {100*bm["specificity"]:.2f}→{100*am["specificity"]:.2f}→{100*lm["specificity"]:.2f}。当前信号是写入/泛化增强伴随局部保持代价。</li>')
-    rq_done=all((root/f'{ds}_rq_seed42.json').exists() for ds in ('counterfact','zsre'))
+    for ds,label in [('counterfact','CounterFact'),('zsre','ZsRE')]:
+        rq_runs=[results.get(f'{ds}_rq_seed{s}') for s in (42,43,44)]
+        rq_runs=[d['metrics'] for d in rq_runs if d]
+        arith_runs=[results.get(f'{ds}_arithmetic_seed{s}') for s in (42,43,44)]
+        arith_runs=[d['metrics'] for d in arith_runs if d]
+        if rq_runs and len(rq_runs) < 3 and len(arith_runs) == 3:
+            rm={k:100*statistics.mean(r[k] for r in rq_runs) for k in ('efficacy','paraphrase','specificity','harmonic_score')}
+            am={k:100*statistics.mean(r[k] for r in arith_runs) for k in ('efficacy','paraphrase','specificity','harmonic_score')}
+            items.append(f'<li><b>{label} Semantic-RQ 预备信号（{len(rq_runs)}/3 seeds）：</b>相对 Arithmetic 三-seed均值，Δ efficacy={rm["efficacy"]-am["efficacy"]:+.2f}，Δ paraphrase={rm["paraphrase"]-am["paraphrase"]:+.2f}，Δ specificity={rm["specificity"]-am["specificity"]:+.2f}，Δ harmonic={rm["harmonic_score"]-am["harmonic_score"]:+.2f} 个百分点。仅作运行中趋势，不作为最终方法排序。</li>')
+    rq_done=all(f'{ds}_rq_seed{s}' in results for ds in ('counterfact','zsre') for s in (42,43,44))
     if not rq_done:
-        items.append('<li><b>Semantic-RQ 主结论尚未形成：</b>RQ 的完整官方评测未全部完成，当前不能据 Arithmetic/LoRA 推断 semantic hash 有效或无效。</li>')
+        items.append('<li><b>Semantic-RQ 主结论尚未形成：</b>修复后三 seed 完整官方评测尚未全部完成；当前只报告已完成 run 的预备趋势。</li>')
     items.append('<li><b>修复后重跑：</b>RQ seeds 42/43/44 均从空的独立持久 cache 重新开始，离线表外 n-gram 执行 encoder→RQ，随后同时写入 SQLite 与进程内热 cache；旧协议中途产物不进入结果表。</li>')
     items.append('<li><b>效率口径：</b>当前训练 wall-clock 包含首次遇到 n-gram 的 embedding/RQ 成本，不作为最终推理延迟。latency/throughput 将在三方法同代码、同 batch、同序列及已预热 cache 下单独复测。</li>')
     complete_seed_counts=[]
