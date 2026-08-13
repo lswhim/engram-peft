@@ -356,3 +356,31 @@ effect-size estimation，不写论文最终数字。
 - 单 seed PAWS-X 或旧知识编辑表可以作为论文结果。
 
 最终 go/no-go 由 BabelEdits/MzsRE 的跨语言 propagation、locality 和 shared-row 因果干预共同决定。
+# Formal benchmark expansion (2026-08-14)
+
+The paper now uses three complementary official benchmark families rather than
+adding more variants of CounterFact.  All methods share the same base model,
+memory capacity, optimizer budget, edit order, and seeds.
+
+1. **ParaRel-based causal address test.** Within every relation, targets are
+   deterministically deranged so the evaluation cannot be solved from the base
+   model's stored fact. One canonical template is used for memory writing and
+   all other templates are evaluation-only. Arithmetic-fixed, Semantic-RQ, and
+   frequency-matched RQ-Shuffled are compared. Queries are stratified by Qwen
+   embedding cosine and character-trigram Jaccard; the primary slice is high
+   semantic similarity with low lexical overlap.
+2. **WikiBigEdit lifelong scale.** Official chronological increments are
+   concatenated without future leakage. The same evolving adapter is evaluated
+   after 1K, 5K, 10K, and 50K writes. Report current efficacy/generalization,
+   fixed-cohort retention from every earlier increment, locality, and the area
+   under the retention curve. This is a continuous write experiment, not four
+   independently trained prefixes.
+3. **RippleEdits sharing boundary.** Subject aliasing, logical generalization,
+   and compositionality are `should_propagate`; relation specificity and
+   forgetfulness are `should_not_propagate`. Official condition queries gate
+   every testcase before it enters a denominator.
+
+The canonical data conversion entry point is
+`examples/semantic_memory_benchmarks.py`. Generated JSONL manifests retain the
+source split/increment, relation, axis, aliases, and condition queries so every
+reported denominator can be audited.
