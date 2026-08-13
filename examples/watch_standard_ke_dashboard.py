@@ -115,13 +115,17 @@ def conclusions(root: Path) -> str:
     return ''.join(items)
 
 def completion(root: Path) -> str:
+    complete,total=completion_counts(root)
+    return f'{complete}/{total} complete'
+
+def completion_counts(root: Path) -> tuple[int, int]:
     expected={f'{dataset}_{method}_seed{seed}.json' for dataset in ('counterfact','zsre') for method in ('arithmetic','lora','rq') for seed in (42,43,44)} | {f'{dataset}_base_seed42.json' for dataset in ('counterfact','zsre')}
     complete=0
     for name in expected:
         try: d=json.loads((root/name).read_text())
         except Exception: continue
         complete += d.get('status') == 'complete' and d.get('complete_official_split') is True
-    return f'{complete}/{len(expected)} complete'
+    return complete,len(expected)
 
 def render(root: Path) -> str:
     run_rows=''.join(f'<tr><th>{d}</th><td>{m}</td><td>{s}</td><td>{progress(Path(l))[0]}</td><td>{progress(Path(l))[1]}</td><td><code>{l}</code></td></tr>' for d,m,s,l in RUNS)
@@ -136,7 +140,8 @@ def main() -> None:
     while True:
         a.output.parent.mkdir(parents=True,exist_ok=True)
         tmp=a.output.with_suffix('.tmp'); tmp.write_text(render(a.root)); os.replace(tmp,a.output)
-        snapshot={"updated_at":datetime.now().astimezone().isoformat(),"all_complete":False,"kind":"formal_standard_ke"}
+        complete,total=completion_counts(a.root)
+        snapshot={"updated_at":datetime.now().astimezone().isoformat(),"all_complete":complete==total,"completed":complete,"expected":total,"kind":"formal_standard_ke"}
         json_tmp=a.output.with_suffix('.json.tmp'); json_tmp.write_text(json.dumps(snapshot)); os.replace(json_tmp,a.output.with_suffix('.json'))
         time.sleep(a.interval)
 if __name__=='__main__': main()
