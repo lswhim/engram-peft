@@ -36,6 +36,27 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def valid_gate_b_result(payload: Mapping[str, Any]) -> bool:
+    if payload.get("status") != "complete" or payload.get("paper_eligible") is not True:
+        return False
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, Mapping):
+        return False
+    for endpoint, expected_examples in (
+        ("qqp_validation", 40_430),
+        ("paws_wiki_test", 8_000),
+    ):
+        values = metrics.get(endpoint)
+        if not isinstance(values, Mapping) or values.get("examples") != expected_examples:
+            return False
+        if not all(
+            isinstance(values.get(metric), int | float)
+            for metric in ("accuracy", "f1", "auroc")
+        ):
+            return False
+    return True
+
+
 def log_progress(path: Path) -> dict[str, Any]:
     """Parse the last Trainer progress/loss without rereading a multi-hour log."""
     try:
@@ -1431,8 +1452,10 @@ def render(snapshot: dict[str, Any]) -> str:
                 if isinstance(metrics, dict)
                 else {}
             )
-            if payload.get("status") == "complete":
+            if valid_gate_b_result(payload):
                 status = '<span class="pill done">完成</span>'
+            elif payload.get("status") == "complete":
+                status = '<span class="pill fail">结果不完整</span>'
             elif payload.get("status") == "training":
                 completed = payload.get("completed_steps", 0)
                 total = payload.get("total_steps", 0)
@@ -1457,7 +1480,7 @@ def render(snapshot: dict[str, Any]) -> str:
         metrics = payload.get("metrics", {}) if isinstance(payload, dict) else {}
         qqp = metrics.get("qqp_validation", {}) if isinstance(metrics, dict) else {}
         wiki = metrics.get("paws_wiki_test", {}) if isinstance(metrics, dict) else {}
-        if payload.get("status") == "complete" and all(
+        if valid_gate_b_result(payload) and all(
             isinstance(value, int | float)
             for value in (qqp.get("accuracy"), wiki.get("accuracy"))
         ):
