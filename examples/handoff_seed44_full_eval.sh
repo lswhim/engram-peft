@@ -6,19 +6,6 @@ if [[ $# -ne 3 ]]; then
   exit 2
 fi
 
-if [[ "$method" == "rq_shuffled" ]]; then
-  for base_seed in 44; do
-    base_output="outputs/semantic_hash_paper/qqp_paws/base_seed${base_seed}.json"
-    [[ -s "$base_output" ]] && continue
-    CUDA_VISIBLE_DEVICES="$gpu" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-    HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-    PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
-    "$python" -u examples/run_qqp_paws_frozen.py \
-      --model "$model" --method base --seed "$base_seed" \
-      --batch-size 16 --eval-batch-size 16 --num-workers 4 \
-      --output "$base_output" > "$log_dir/qqp_paws_base_seed${base_seed}.log" 2>&1
-  done
-fi
 method="$1"
 gpu="$2"
 suffix="$3"
@@ -67,6 +54,19 @@ if [[ ! -s "$gate_b_output" ]]; then
     --model "$model" --method "$method" --seed 44 --result-suffix "$suffix" \
     --batch-size 16 --eval-batch-size 16 --num-workers 4 \
     --output "$gate_b_output" > "$log_dir/qqp_paws_${method}_seed44.log" 2>&1
+fi
+
+if [[ "$method" == "rq_shuffled" ]]; then
+  base_output="outputs/semantic_hash_paper/qqp_paws/base_seed44.json"
+  if [[ ! -s "$base_output" ]]; then
+    CUDA_VISIBLE_DEVICES="$gpu" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+    HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
+    "$python" -u examples/run_qqp_paws_frozen.py \
+      --model "$model" --method base --seed 44 \
+      --batch-size 16 --eval-batch-size 16 --num-workers 4 \
+      --output "$base_output" > "$log_dir/qqp_paws_base_seed44.log" 2>&1
+  fi
 fi
 
 # C4 has long examples and previously OOMed only while sharing a training GPU.
