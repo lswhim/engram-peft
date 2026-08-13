@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Run standard lm-eval tasks for a base or completed Engram experiment.
 
-The default task set deliberately mixes corpus perplexity (WikiText-103 and
-C4) with LAMBADA last-word prediction.  An Engram checkpoint may be supplied
+The default task set uses the public lm-eval ``wikitext`` and ``c4`` corpus
+perplexity tasks plus LAMBADA last-word prediction. An Engram checkpoint may be supplied
 directly or resolved from a completed benchmark ``run_suffix``.  Result-suffix
 resolution rejects partial fixed-step runs so early-stop diagnostics cannot
 silently enter the paper table.
@@ -23,8 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True)
     parser.add_argument(
         "--tasks",
-        default="paloma_wikitext_103,paloma_c4_en,lambada_openai",
-        help="Comma-separated lm-evaluation-harness task names.",
+        default="wikitext,c4,lambada_openai",
+        help="Comma-separated public lm-evaluation-harness task names.",
     )
     parser.add_argument("--engram-weights", type=Path)
     parser.add_argument("--result-suffix")
