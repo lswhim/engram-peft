@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-weights")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=0, help="0 means the complete official split")
+    parser.add_argument("--batch-size", type=int, default=24)
+    parser.add_argument("--case-chunk-size", type=int, default=32)
     return parser.parse_args()
 
 
@@ -79,17 +81,53 @@ def load_cases(dataset: str, limit: int) -> list[dict[str, Any]]:
 
 
 @torch.inference_mode()
-def sequence_logprob(tokenizer: Any, model: Any, prompt: str, answer: str) -> float:
-    prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
-    answer_ids = tokenizer(" " + answer.strip(), add_special_tokens=False)["input_ids"]
-    if not answer_ids:
-        return float("-inf")
-    input_ids = torch.tensor([prompt_ids + answer_ids], device=model.device)
-    logits = model(input_ids=input_ids, use_cache=False).logits[0, :-1].float()
-    start = len(prompt_ids) - 1
-    positions = torch.arange(start, start + len(answer_ids), device=model.device)
-    targets = input_ids[0, len(prompt_ids) :]
-    return float(torch.log_softmax(logits[positions], dim=-1).gather(1, targets[:, None]).sum())
+def sequence_logprobs(
+    tokenizer: Any, model: Any, pairs: list[tuple[str, str]], batch_size: int
+) -> list[float]:
+    """Score complete answer strings in batches, masking every prompt token."""
+    encoded: list[tuple[list[int], int]] = []
+    for prompt, answer in pairs:
+        prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
+        answer_ids = tokenizer(" " + answer.strip(), add_special_tokens=False)["input_ids"]
+        encoded.append((prompt_ids + answer_ids, len(prompt_ids)))
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = tokenizer.eos_token_id
+    scores: list[float] = []
+    for offset in range(0, len(encoded), batch_size):
+        batch = encoded[offset : offset + batch_size]
+        width = max(len(ids) for ids, _ in batch)
+        input_ids = torch.full((len(batch), width), pad_id, dtype=torch.long, device=model.device)
+        attention_mask = torch.zeros_like(input_ids)
+        for row, (ids, _) in enumerate(batch):
+            input_ids[row, : len(ids)] = torch.tensor(ids, device=model.device)
+            attention_mask[row, : len(ids)] = 1
+        logits = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False).logits[:, :-1].float()
+        token_logprobs = torch.log_softmax(logits, dim=-1).gather(2, input_ids[:, 1:, None]).squeeze(-1)
+        for row, (ids, prompt_len) in enumerate(batch):
+            if len(ids) <= prompt_len:
+                scores.append(float("-inf"))
+            else:
+                scores.append(float(token_logprobs[row, prompt_len - 1 : len(ids) - 1].sum()))
+    return scores
+
+
+def evaluate_chunk(tokenizer: Any, model: Any, cases: list[dict[str, Any]], batch_size: int) -> list[dict[str, Any]]:
+    pairs: list[tuple[str, str]] = []
+    specs: list[tuple[int, str]] = []
+    for case_index, case in enumerate(cases):
+        comparisons = [("efficacy", case["prompt"], case["target_new"], case["target_true"])]
+        comparisons += [("paraphrase", prompt, case["target_new"], case["target_true"]) for prompt in case["paraphrases"]]
+        comparisons += [("specificity", prompt, answer, case["target_new"]) for prompt, answer in case["neighbors"]]
+        for kind, prompt, positive, negative in comparisons:
+            specs.extend([(case_index, kind), (case_index, kind)])
+            pairs.extend([(prompt, positive), (prompt, negative)])
+    scores = sequence_logprobs(tokenizer, model, pairs, batch_size)
+    results = [{"efficacy": [], "paraphrase": [], "specificity": []} for _ in cases]
+    for offset in range(0, len(specs), 2):
+        case_index, kind = specs[offset]
+        results[case_index][kind].append(scores[offset] - scores[offset + 1])
+    return results
 
 
 def harmonic(values: list[float]) -> float:
@@ -124,30 +162,32 @@ def main() -> None:
     counts = {"efficacy": 0.0, "paraphrase": 0.0, "specificity": 0.0}
     denominators = {"efficacy": 0, "paraphrase": 0, "specificity": 0}
     with samples_path.open("w", encoding="utf-8") as handle:
-        for case_index, case in enumerate(cases, 1):
-            new_lp = sequence_logprob(tokenizer, model, case["prompt"], case["target_new"])
-            true_lp = sequence_logprob(tokenizer, model, case["prompt"], case["target_true"])
-            efficacy = float(new_lp > true_lp)
-            counts["efficacy"] += efficacy
-            denominators["efficacy"] += 1
-            paraphrase_results = []
-            for prompt in case["paraphrases"]:
-                margin = sequence_logprob(tokenizer, model, prompt, case["target_new"]) - sequence_logprob(tokenizer, model, prompt, case["target_true"])
-                paraphrase_results.append({"prompt": prompt, "margin": margin, "success": float(margin > 0)})
-            neighbor_results = []
-            for prompt, answer in case["neighbors"]:
-                margin = sequence_logprob(tokenizer, model, prompt, answer) - sequence_logprob(tokenizer, model, prompt, case["target_new"])
-                neighbor_results.append({"prompt": prompt, "margin": margin, "success": float(margin > 0)})
-            for key, results in (("paraphrase", paraphrase_results), ("specificity", neighbor_results)):
-                counts[key] += sum(item["success"] for item in results)
-                denominators[key] += len(results)
-            handle.write(json.dumps({
-                "case_id": case["case_id"], "efficacy": efficacy,
-                "efficacy_margin": new_lp - true_lp,
-                "paraphrases": paraphrase_results, "neighbors": neighbor_results,
-            }, ensure_ascii=False) + "\n")
-            if case_index % 100 == 0:
-                print(f"[{case_index}/{len(cases)}]", flush=True)
+        for chunk_start in range(0, len(cases), args.case_chunk_size):
+            chunk = cases[chunk_start : chunk_start + args.case_chunk_size]
+            evaluated = evaluate_chunk(tokenizer, model, chunk, args.batch_size)
+            for case, result in zip(chunk, evaluated):
+                efficacy_margin = result["efficacy"][0]
+                efficacy = float(efficacy_margin > 0)
+                counts["efficacy"] += efficacy
+                denominators["efficacy"] += 1
+                paraphrase_results = [
+                    {"prompt": prompt, "margin": margin, "success": float(margin > 0)}
+                    for prompt, margin in zip(case["paraphrases"], result["paraphrase"])
+                ]
+                neighbor_results = [
+                    {"prompt": prompt, "margin": margin, "success": float(margin > 0)}
+                    for (prompt, _), margin in zip(case["neighbors"], result["specificity"])
+                ]
+                for key, items in (("paraphrase", paraphrase_results), ("specificity", neighbor_results)):
+                    counts[key] += sum(item["success"] for item in items)
+                    denominators[key] += len(items)
+                handle.write(json.dumps({
+                    "case_id": case["case_id"], "efficacy": efficacy,
+                    "efficacy_margin": efficacy_margin,
+                    "paraphrases": paraphrase_results, "neighbors": neighbor_results,
+                }, ensure_ascii=False) + "\n")
+            complete = min(chunk_start + len(chunk), len(cases))
+            print(f"[{complete}/{len(cases)}]", flush=True)
     metrics = {
         key: counts[key] / denominators[key] if denominators[key] else None
         for key in counts
@@ -158,6 +198,7 @@ def main() -> None:
         "status": "complete", "dataset": args.dataset, "examples": len(cases),
         "complete_official_split": args.limit == 0, "metrics": metrics,
         "denominators": denominators, "samples": str(samples_path),
+        "scoring": "full_target_conditional_log_likelihood",
     }
     temporary = args.output.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
