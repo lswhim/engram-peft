@@ -24,16 +24,30 @@ do
   sleep 20
 done
 
-gate_b_output="outputs/semantic_hash_paper/qqp_paws/base_seed42.json"
-gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_base_seed42.log"
+gate_b_output="outputs/semantic_hash_paper/qqp_paws/semantic_rq_seed43.json"
+gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_semantic_rq_seed43.log"
 if [[ ! -s "$gate_b_output" ]]; then
   CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-  HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
+  HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
   /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
     examples/run_qqp_paws_frozen.py \
     --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
-    --method base --seed 42 --batch-size 16 --eval-batch-size 16 \
+    --method semantic_rq --seed 43 --result-suffix "$suffix" \
+    --batch-size 16 --eval-batch-size 16 --num-workers 4 \
     --output "$gate_b_output" > "$gate_b_log" 2>&1
+fi
+
+c4_output="$output_dir/semantic_rq_seed43_c4.json"
+if [[ ! -s "$c4_output" ]]; then
+  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
+    examples/evaluate_standard_lm.py \
+    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
+    --tasks c4 --method semantic_rq --seed 43 --batch-size 1 \
+    --result-suffix "$suffix" --output "$c4_output" \
+    > "$log_dir/standard_lm_semantic_rq_seed43_c4.log" 2>&1
 fi
 
 for task in wikitext lambada; do
