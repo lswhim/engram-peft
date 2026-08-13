@@ -24,11 +24,11 @@ def test_pararel_uses_counterfactual_target_and_holds_out_templates(tmp_path):
 def test_ripple_preserves_condition_gating_and_boundary_roles(tmp_path):
     path = tmp_path / "random.json"
     testcase = {"test_queries":[{"prompt":"alias?","answers":[{"value":"new","aliases":["n"]}]}], "test_condition":"AND", "condition_queries":[{"prompt":"known?","answers":[{"value":"yes","aliases":[]}]}]}
-    row = {"edit":{"prompt":"Alice lives in new.","relation":"R"}, "Subject_Aliasing":[testcase], "Relation_Specificity":[testcase]}
+    row = {"edit":{"prompt":"The home of Alice is new.","relation":"R"}, "Subject_Aliasing":[testcase], "Relation_Specificity":[testcase]}
     path.write_text(json.dumps([row]))
     case = load_ripple([path])[0]
     queries = case.queries
-    assert case.prompt == "Alice lives in"
+    assert case.prompt == "The home of Alice is"
     assert case.target == "new"
     assert {q.role for q in queries} == {"should_propagate", "should_not_propagate"}
     assert all(q.condition == "AND" and q.condition_prompts == ("known?",) for q in queries)
