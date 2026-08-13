@@ -59,6 +59,9 @@ def target_token_accuracy(tokenizer: Any, model: Any, pairs: list[tuple[str, str
         for row,(tokens,prompt_len) in enumerate(batch):
             gold=ids[row,prompt_len:len(tokens)]; pred=predictions[row,prompt_len-1:len(tokens)-1]
             scores.append(float((pred==gold).float().mean()) if gold.numel() else 0.0)
+        complete=min(start+len(batch),len(encoded))
+        if complete==len(encoded) or complete//1000 != start//1000:
+            print(f"[target-score {complete}/{len(encoded)}]",flush=True)
     return scores
 
 
@@ -72,6 +75,9 @@ def semantic_cosines(text_pairs: list[tuple[str,str]], model_name: str, batch_si
         hidden=encoder(**batch).last_hidden_state; lengths=batch["attention_mask"].sum(1)-1
         vector=hidden[torch.arange(hidden.size(0),device=hidden.device),lengths]
         vectors.append(torch.nn.functional.normalize(vector.float(),dim=-1).cpu())
+        complete=min(start+len(batch["input_ids"]),len(texts))
+        if complete==len(texts) or complete//2000 != start//2000:
+            print(f"[geometry-embed {complete}/{len(texts)}]",flush=True)
     matrix=torch.cat(vectors).reshape(-1,2,vectors[0].shape[-1])
     del encoder
     torch.cuda.empty_cache()
