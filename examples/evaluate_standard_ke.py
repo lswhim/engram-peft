@@ -81,10 +81,10 @@ def load_cases(dataset: str, limit: int) -> list[dict[str, Any]]:
 
 
 @torch.inference_mode()
-def sequence_logprobs(
+def sequence_mean_logprobs(
     tokenizer: Any, model: Any, pairs: list[tuple[str, str]], batch_size: int
 ) -> list[float]:
-    """Score complete answer strings in batches, masking every prompt token."""
+    """Score complete answers with official length-normalized token log-probability."""
     encoded: list[tuple[list[int], int]] = []
     for prompt, answer in pairs:
         prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
@@ -108,7 +108,7 @@ def sequence_logprobs(
             if len(ids) <= prompt_len:
                 scores.append(float("-inf"))
             else:
-                scores.append(float(token_logprobs[row, prompt_len - 1 : len(ids) - 1].sum()))
+                scores.append(float(token_logprobs[row, prompt_len - 1 : len(ids) - 1].mean()))
     return scores
 
 
@@ -122,7 +122,7 @@ def evaluate_chunk(tokenizer: Any, model: Any, cases: list[dict[str, Any]], batc
         for kind, prompt, positive, negative in comparisons:
             specs.extend([(case_index, kind), (case_index, kind)])
             pairs.extend([(prompt, positive), (prompt, negative)])
-    scores = sequence_logprobs(tokenizer, model, pairs, batch_size)
+    scores = sequence_mean_logprobs(tokenizer, model, pairs, batch_size)
     results = [{"efficacy": [], "paraphrase": [], "specificity": []} for _ in cases]
     for offset in range(0, len(specs), 2):
         case_index, kind = specs[offset]
@@ -198,7 +198,7 @@ def main() -> None:
         "status": "complete", "dataset": args.dataset, "examples": len(cases),
         "complete_official_split": args.limit == 0, "metrics": metrics,
         "denominators": denominators, "samples": str(samples_path),
-        "scoring": "full_target_conditional_log_likelihood",
+        "scoring": "full_target_mean_token_log_likelihood",
     }
     temporary = args.output.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
