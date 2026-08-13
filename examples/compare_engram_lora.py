@@ -82,10 +82,16 @@ def main() -> None:
             "mquake",
             "wiki_recent",
             "wiki_cf",
+            "semantic_manifest",
         ],
         help="Training/eval corpus.",
     )
     parser.add_argument("--seed", type=int, default=42, help="Global seed.")
+    parser.add_argument(
+        "--manifest_path",
+        type=str,
+        help="Canonical-write JSONL produced by semantic_memory_benchmarks.py.",
+    )
     parser.add_argument(
         "--methods",
         nargs="+",

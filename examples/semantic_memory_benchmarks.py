@@ -123,6 +123,12 @@ def load_ripple(paths: Iterable[Path]) -> list[EditCase]:
         for index, example in enumerate(json.loads(path.read_text(encoding="utf-8"))):
             edit = example["edit"]
             target = str(edit["prompt"]).rstrip().rsplit(" is ", 1)[-1].rstrip(".")
+            edit_prompt = str(edit["prompt"]).rstrip()
+            suffix = f" {target}."
+            if edit_prompt.endswith(suffix):
+                edit_prompt = edit_prompt[: -len(suffix)]
+            elif edit_prompt.endswith(target):
+                edit_prompt = edit_prompt[: -len(target)].rstrip()
             queries: list[Query] = []
             for axis in sorted(RIPPLE_SHOULD | RIPPLE_SHOULD_NOT):
                 role = "should_propagate" if axis in RIPPLE_SHOULD else "should_not_propagate"
@@ -138,7 +144,7 @@ def load_ripple(paths: Iterable[Path]) -> list[EditCase]:
                             condition=str(testcase.get("test_condition", "OR")),
                         ))
             cases.append(EditCase(
-                case_id=f"{path.stem}:{index}", prompt=str(edit["prompt"]), target=target,
+                case_id=f"{path.stem}:{index}", prompt=edit_prompt, target=target,
                 queries=tuple(queries), metadata={"split": path.stem, "relation": edit.get("relation")},
             ))
     return cases

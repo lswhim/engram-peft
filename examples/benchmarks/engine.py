@@ -108,6 +108,7 @@ class BenchmarkEngine:
             num_proc=args.num_workers,
             dataset=getattr(args, "dataset", "tinystories"),
             seed=args.seed,
+            manifest_path=getattr(args, "manifest_path", None),
         )
 
         self.base_model = None

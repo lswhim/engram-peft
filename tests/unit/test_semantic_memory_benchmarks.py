@@ -26,7 +26,10 @@ def test_ripple_preserves_condition_gating_and_boundary_roles(tmp_path):
     testcase = {"test_queries":[{"prompt":"alias?","answers":[{"value":"new","aliases":["n"]}]}], "test_condition":"AND", "condition_queries":[{"prompt":"known?","answers":[{"value":"yes","aliases":[]}]}]}
     row = {"edit":{"prompt":"Alice lives in new.","relation":"R"}, "Subject_Aliasing":[testcase], "Relation_Specificity":[testcase]}
     path.write_text(json.dumps([row]))
-    queries = load_ripple([path])[0].queries
+    case = load_ripple([path])[0]
+    queries = case.queries
+    assert case.prompt == "Alice lives in"
+    assert case.target == "new"
     assert {q.role for q in queries} == {"should_propagate", "should_not_propagate"}
     assert all(q.condition == "AND" and q.condition_prompts == ("known?",) for q in queries)
     assert manifest_summary(load_ripple([path]))["conditioned_queries"] == 2

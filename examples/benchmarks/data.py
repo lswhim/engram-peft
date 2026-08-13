@@ -203,9 +203,31 @@ def prepare_dataset(
     num_proc: int = 4,
     dataset: str = "tinystories",
     seed: int = 42,
+    manifest_path: str | None = None,
 ) -> tuple[Any, Any]:
     """Standardized dataset preparation. dataset in {tinystories, biomed, counterfact, zsre, mquake}."""
-    if dataset == "fineweb":
+    if dataset == "semantic_manifest":
+        if not manifest_path:
+            raise ValueError("semantic_manifest requires --manifest_path")
+        import json
+
+        rows = []
+        with open(manifest_path, encoding="utf-8") as handle:
+            for line in handle:
+                case = json.loads(line)
+                rows.append({
+                    "text": f"{case['prompt']} {case['target']}",
+                    "prompt": str(case["prompt"]),
+                    "target": str(case["target"]),
+                })
+                if subset_size > 0 and len(rows) >= subset_size:
+                    break
+        if not rows:
+            raise ValueError(f"empty semantic benchmark manifest: {manifest_path}")
+        train_ds = Dataset.from_list(rows)
+        val_ds = Dataset.from_list(rows[: min(eval_size, len(rows))])
+        print(f"Semantic manifest canonical-only writes: {len(train_ds)} cases")
+    elif dataset == "fineweb":
         train_ds, val_ds = _load_fineweb(subset_size, eval_size, seed=seed)
     elif dataset == "biomed":
         train_ds, val_ds = _load_biomed(subset_size, eval_size, seed=seed)
