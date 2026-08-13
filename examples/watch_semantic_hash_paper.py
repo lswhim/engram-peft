@@ -909,6 +909,22 @@ def conclusions(snapshot: dict[str, Any]) -> list[str]:
             + (f"当前状态：{state}。" if state else "将在 one-pass 队列结束后自动启动。")
         )
     external = snapshot.get("external", {})
+    diagnostic_fragments = []
+    for benchmark in ("xnli", "pawsx"):
+        row = external.get(benchmark, {})
+        arithmetic = row.get("corrected_matched_seed42")
+        semantic = row.get("rq_seed42")
+        if isinstance(arithmetic, int | float) and isinstance(semantic, int | float):
+            diagnostic_fragments.append(
+                f"{benchmark.upper()}: Arithmetic-fixed={arithmetic:.4f}，"
+                f"Semantic-RQ={semantic:.4f}（Δ={100 * (semantic - arithmetic):+.2f} pp）"
+            )
+    if diagnostic_fragments:
+        items.append(
+            "外部任务的单 seed 历史诊断："
+            + "；".join(diagnostic_fragments)
+            + "。该比较尚缺 benchmark-specific RQ-Shuffled 与三 seed，不能承担主结论。"
+        )
     if snapshot.get("external_complete") is True:
         for benchmark in ("xnli", "pawsx"):
             means = {}
