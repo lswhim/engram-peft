@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 cd /anguszhang-cfs-nj/seokliu_workspace/engram
-suffix="_paper_gate1_fineweb_100m_fixedsteps_rq_shuffled_seed43"
+suffix="_paper_gate1_fineweb_100m_fixedsteps_semantic_rq_seed43"
 output_dir="outputs/semantic_hash_paper/standard_lm"
 log_dir="outputs/semantic_hash_paper/logs"
 
@@ -25,14 +25,14 @@ do
 done
 
 for task in wikitext lambada; do
-  output="$output_dir/rq_shuffled_seed43_${task}.json"
-  log="$log_dir/standard_lm_rq_shuffled_seed43_${task}.log"
+  output="$output_dir/semantic_rq_seed43_${task}.json"
+  log="$log_dir/standard_lm_semantic_rq_seed43_${task}.log"
   [[ -s "$output" ]] && continue
-  CUDA_VISIBLE_DEVICES=3 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
   /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
     examples/evaluate_standard_lm.py \
     --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
-    --tasks "$task" --method rq_shuffled --seed 43 --batch-size 1 \
+    --tasks "$task" --method semantic_rq --seed 43 --batch-size 1 \
     --result-suffix "$suffix" --output "$output" > "$log" 2>&1
 done
