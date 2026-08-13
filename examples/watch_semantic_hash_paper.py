@@ -1518,12 +1518,22 @@ def render(snapshot: dict[str, Any]) -> str:
             qqp_delta = semantic_gate_b["qqp"] - base_gate_b["qqp"]
             wiki_delta = semantic_gate_b["wiki"] - base_gate_b["wiki"]
             gate_b_verdict = "Seed42 暂不支持 OOD 泛化"
-            gate_b_detail = (
+            comparison = (
                 f"Semantic vs Base：QQP Acc {semantic_gate_b['qqp']:.2%} vs "
                 f"{base_gate_b['qqp']:.2%}（{qqp_delta:+.2%}），PAWS-Wiki Acc "
                 f"{semantic_gate_b['wiki']:.2%} vs {base_gate_b['wiki']:.2%}"
-                f"（{wiki_delta:+.2%}）。内域略升但 OOD 明显下降；仍需 "
-                "Arithmetic、Shuffled 与 seed43/44 判断原因和稳定性。"
+                f"（{wiki_delta:+.2%}）。"
+            )
+            if "arithmetic_matched" in gate_b_seed42:
+                arithmetic_gate_b = gate_b_seed42["arithmetic_matched"]
+                comparison += (
+                    f" Semantic vs Arithmetic：QQP "
+                    f"{semantic_gate_b['qqp'] - arithmetic_gate_b['qqp']:+.2%}，"
+                    f"PAWS-Wiki {semantic_gate_b['wiki'] - arithmetic_gate_b['wiki']:+.2%}。"
+                )
+            gate_b_detail = (
+                comparison
+                + "内域略升但 OOD 下降；仍需 Shuffled 与 seed43/44 判断原因和稳定性。"
             )
         elif "base" in gate_b_seed42:
             gate_b_detail = (
