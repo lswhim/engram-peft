@@ -5,6 +5,7 @@ import shutil
 from typing import Any
 
 import torch
+from torch.utils.data import SequentialSampler
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.optim.adamw import AdamW
 from transformers import (
@@ -14,6 +15,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -29,6 +31,29 @@ from engram_peft.utils.compat import wash_tokenizer
 # Configure logging to see Engram injection logs
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 logging.getLogger("engram_peft").setLevel(logging.INFO)
+
+
+class ChronologicalEngramTrainer(EngramTrainer):
+    """HF Trainer variant that consumes the manifest in its original order."""
+
+    def _get_train_sampler(self) -> SequentialSampler:
+        return SequentialSampler(self.train_dataset)
+
+
+class MilestoneSaveCallback(TrainerCallback):
+    def __init__(self, milestones: dict[int, str]):
+        self.milestones = milestones
+        self.saved: set[int] = set()
+
+    def on_step_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+        del args
+        step=int(state.global_step)
+        if step in self.milestones and step not in self.saved:
+            model=kwargs["model"]
+            model.save_pretrained(self.milestones[step])
+            self.saved.add(step)
+            print(f"[lifelong milestone] step={step} saved={self.milestones[step]}",flush=True)
+        return control
 
 
 def extract_trainer_metrics(trainer: Trainer, train_result: Any) -> dict[str, Any]:
@@ -259,12 +284,35 @@ def train_engram(
         )
     else:
         collator = EngramDataCollator(tokenizer=wash_tokenizer(tokenizer), config=config)
-    callbacks = (
+    callbacks: list[Any] = (
         []
         if getattr(args, "disable_early_stopping", False)
         else [EarlyStoppingCallback(early_stopping_patience=5)]
     )
-    trainer = EngramTrainer(
+    trainer_class = (
+        ChronologicalEngramTrainer
+        if getattr(args, "chronological", False)
+        else EngramTrainer
+    )
+    if getattr(args, "milestone_examples", []):
+        effective_batch = int(args.batch_size) * int(args.grad_accum)
+        invalid = [
+            point for point in args.milestone_examples
+            if point % effective_batch
+        ]
+        if invalid:
+            raise ValueError(
+                f"milestones {invalid} are not divisible by effective batch "
+                f"{effective_batch}"
+            )
+        milestone_dirs = {
+            point // effective_batch: (
+                f"outputs/benchmarks/milestones/{run_tag}/writes_{point}"
+            )
+            for point in args.milestone_examples
+        }
+        callbacks.append(MilestoneSaveCallback(milestone_dirs))
+    trainer = trainer_class(
         model=model,
         args=training_args,
         train_dataset=train_dataset,

@@ -59,6 +59,8 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--subset", type=int, default=1000)
     parser.add_argument("--grad_accum", type=int, default=2)
+    parser.add_argument("--chronological", action="store_true", help="Disable train shuffling for lifelong streams.")
+    parser.add_argument("--milestone_examples", type=int, nargs="+", default=[])
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument(
