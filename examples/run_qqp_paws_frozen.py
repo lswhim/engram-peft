@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--paws-qqp-tsv", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=16)
     parser.add_argument("--max-length", type=int, default=128)
     parser.add_argument("--learning-rate", type=float, default=1e-3)

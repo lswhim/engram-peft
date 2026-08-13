@@ -24,6 +24,18 @@ do
   sleep 20
 done
 
+gate_b_output="outputs/semantic_hash_paper/qqp_paws/base_seed42.json"
+gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_base_seed42.log"
+if [[ ! -s "$gate_b_output" ]]; then
+  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
+    examples/run_qqp_paws_frozen.py \
+    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
+    --method base --seed 42 --batch-size 16 --eval-batch-size 16 \
+    --output "$gate_b_output" > "$gate_b_log" 2>&1
+fi
+
 for task in wikitext lambada; do
   output="$output_dir/semantic_rq_seed43_${task}.json"
   log="$log_dir/standard_lm_semantic_rq_seed43_${task}.log"
