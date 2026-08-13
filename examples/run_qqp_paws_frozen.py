@@ -103,9 +103,13 @@ class PairCollator:
         self.max_length = max_length
 
     def __call__(self, rows: Sequence[Mapping[str, Any]]) -> dict[str, torch.Tensor]:
+        texts = [
+            "Paraphrase classification.\n"
+            f"Question 1: {row['question1']}\nQuestion 2: {row['question2']}"
+            for row in rows
+        ]
         encoded = self.tokenizer(
-            [str(row["question1"]) for row in rows],
-            [str(row["question2"]) for row in rows],
+            texts,
             padding=True,
             truncation=True,
             max_length=self.max_length,
