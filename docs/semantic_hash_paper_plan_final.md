@@ -129,17 +129,21 @@
 QQP train
   → 训练相同 backbone + 不同 Engram addressing
   → QQP validation/test（in-domain）
-  → PAWS-QQP test（zero target update，OOD）
+  → PAWS-QQP dev_and_test（677 条，zero target update，OOD）
 ```
 
 它直接检验：在普通同义问句上学习后，能否泛化到具有高词面重叠、但标签更困难的 PAWS 样本。
+
+PAWS 官方因 QQP 许可不能直接分发句子，只提供索引，必须用原始 QQP 重建。PAWS-QQP 没有
+独立 test split：官方只有 11,988 条 train 和 677 条 `dev_and_test`。主 OOD endpoint 使用完整
+677 条并如实命名；不能把 Hugging Face `paws/labeled_final`（PAWS-Wiki）冒充 PAWS-QQP test。
 
 ### 4.2 辅助公开任务
 
 | 训练 → 测试 | 指标 | 地位 |
 |---|---:|---|
 | QQP → QQP | Accuracy/F1 | in-domain 必报 |
-| QQP → PAWS-QQP | Accuracy/F1/AUROC | 主要 OOD endpoint |
+| QQP → PAWS-QQP dev_and_test | Accuracy/F1/AUROC | 主要 OOD endpoint（677 条） |
 | PAWS-Wiki train → PAWS-Wiki test | Accuracy | 复现性辅助 |
 | MRPC train → MRPC test | Accuracy/F1 | 小样本辅助，不单独支撑结论 |
 
