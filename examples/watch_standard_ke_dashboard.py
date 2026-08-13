@@ -111,6 +111,7 @@ def conclusions(root: Path) -> str:
     rq_done=all((root/f'{ds}_rq_seed42.json').exists() for ds in ('counterfact','zsre'))
     if not rq_done:
         items.append('<li><b>Semantic-RQ 主结论尚未形成：</b>RQ 的完整官方评测未全部完成，当前不能据 Arithmetic/LoRA 推断 semantic hash 有效或无效。</li>')
+    items.append('<li><b>效率口径：</b>RQ seeds 42/43 在进程启动时使用逐 key SQLite 热查询实现，只用于效果；seed44 起启用等价的进程内地址 cache。最终 latency/throughput 将用同一代码、同一已预热 cache 单独复测，不混用当前训练 wall-clock。</li>')
     complete_seed_counts=[]
     for ds in ('counterfact','zsre'):
         for method in ('arithmetic','lora','rq'):
