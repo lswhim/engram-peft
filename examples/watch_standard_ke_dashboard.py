@@ -111,7 +111,15 @@ def conclusions(root: Path) -> str:
     rq_done=all((root/f'{ds}_rq_seed42.json').exists() for ds in ('counterfact','zsre'))
     if not rq_done:
         items.append('<li><b>Semantic-RQ 主结论尚未形成：</b>RQ 的完整官方评测未全部完成，当前不能据 Arithmetic/LoRA 推断 semantic hash 有效或无效。</li>')
-    items.append('<li><b>统计边界：</b>当前表是 seed 42；方法排序必须等 3 seeds 后报告均值与标准差。</li>')
+    complete_seed_counts=[]
+    for ds in ('counterfact','zsre'):
+        for method in ('arithmetic','lora','rq'):
+            n=sum(f'{ds}_{method}_seed{seed}' in results for seed in (42,43,44))
+            complete_seed_counts.append(n)
+    if min(complete_seed_counts, default=0) < 3:
+        items.append('<li><b>统计边界：</b>三 seed 矩阵仍不完整；逐 run 数字可用于运行审计，但方法排序只在对应方法 3/3 seeds 到齐后报告 mean ± sample std。</li>')
+    else:
+        items.append('<li><b>统计状态：</b>核心方法三 seed 已齐，汇总表报告 mean ± sample std；Base 仅作为固定预训练参照，不参与随机种子方差。</li>')
     return ''.join(items)
 
 def completion(root: Path) -> str:
