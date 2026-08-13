@@ -112,6 +112,50 @@ def sequence_mean_logprobs(
     return scores
 
 
+@torch.inference_mode()
+def sequence_token_accuracy(
+    tokenizer: Any, model: Any, pairs: list[tuple[str, str]], batch_size: int
+) -> list[tuple[int, int]]:
+    """Official ZsRE-style teacher-forced token accuracy for complete answers."""
+    encoded: list[tuple[list[int], int]] = []
+    for prompt, answer in pairs:
+        prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
+        answer_ids = tokenizer(" " + answer.strip(), add_special_tokens=False)["input_ids"]
+        encoded.append((prompt_ids + answer_ids, len(prompt_ids)))
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    results: list[tuple[int, int]] = []
+    for offset in range(0, len(encoded), batch_size):
+        batch = encoded[offset : offset + batch_size]
+        width = max(len(ids) for ids, _ in batch)
+        input_ids = torch.full((len(batch), width), pad_id, dtype=torch.long, device=model.device)
+        attention_mask = torch.zeros_like(input_ids)
+        for row, (ids, _) in enumerate(batch):
+            input_ids[row, : len(ids)] = torch.tensor(ids, device=model.device)
+            attention_mask[row, : len(ids)] = 1
+        predictions = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False).logits[:, :-1].argmax(-1)
+        for row, (ids, prompt_len) in enumerate(batch):
+            gold = input_ids[row, prompt_len : len(ids)]
+            pred = predictions[row, prompt_len - 1 : len(ids) - 1]
+            results.append((int((pred == gold).sum()), int(gold.numel())))
+    return results
+
+
+def evaluate_zsre_chunk(tokenizer: Any, model: Any, cases: list[dict[str, Any]], batch_size: int) -> list[dict[str, Any]]:
+    pairs: list[tuple[str, str]] = []
+    specs: list[tuple[int, str, str]] = []
+    for case_index, case in enumerate(cases):
+        pairs.append((case["prompt"], case["target_new"])); specs.append((case_index, "efficacy", case["prompt"]))
+        for prompt in case["paraphrases"]:
+            pairs.append((prompt, case["target_new"])); specs.append((case_index, "paraphrase", prompt))
+        for prompt, answer in case["neighbors"]:
+            pairs.append((prompt, answer)); specs.append((case_index, "specificity", prompt))
+    scores = sequence_token_accuracy(tokenizer, model, pairs, batch_size)
+    results = [{"efficacy": [], "paraphrase": [], "specificity": []} for _ in cases]
+    for (case_index, kind, prompt), (correct, total) in zip(specs, scores, strict=True):
+        results[case_index][kind].append({"prompt": prompt, "correct": correct, "total": total, "accuracy": correct / total if total else 0.0})
+    return results
+
+
 def evaluate_chunk(tokenizer: Any, model: Any, cases: list[dict[str, Any]], batch_size: int) -> list[dict[str, Any]]:
     pairs: list[tuple[str, str]] = []
     specs: list[tuple[int, str]] = []
@@ -164,6 +208,18 @@ def main() -> None:
     with samples_path.open("w", encoding="utf-8") as handle:
         for chunk_start in range(0, len(cases), args.case_chunk_size):
             chunk = cases[chunk_start : chunk_start + args.case_chunk_size]
+            if args.dataset == "zsre":
+                evaluated_zsre = evaluate_zsre_chunk(tokenizer, model, chunk, args.batch_size)
+                for case, result in zip(chunk, evaluated_zsre):
+                    efficacy = result["efficacy"][0]["accuracy"]
+                    for key in ("efficacy", "paraphrase", "specificity"):
+                        counts[key] += sum(item["correct"] for item in result[key])
+                        denominators[key] += sum(item["total"] for item in result[key])
+                    handle.write(json.dumps({"case_id": case["case_id"], "efficacy": efficacy,
+                        "paraphrases": result["paraphrase"], "neighbors": result["specificity"]}, ensure_ascii=False) + "\n")
+                complete = min(chunk_start + len(chunk), len(cases))
+                print(f"[{complete}/{len(cases)}]", flush=True)
+                continue
             evaluated = evaluate_chunk(tokenizer, model, chunk, args.batch_size)
             for case, result in zip(chunk, evaluated):
                 efficacy_margin = result["efficacy"][0]
@@ -198,7 +254,7 @@ def main() -> None:
         "status": "complete", "dataset": args.dataset, "examples": len(cases),
         "complete_official_split": args.limit == 0, "metrics": metrics,
         "denominators": denominators, "samples": str(samples_path),
-        "scoring": "full_target_mean_token_log_likelihood",
+        "scoring": ("teacher_forced_token_accuracy" if args.dataset == "zsre" else "full_target_mean_token_log_likelihood"),
     }
     temporary = args.output.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
