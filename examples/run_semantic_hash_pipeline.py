@@ -160,7 +160,21 @@ def another_fixedsteps_scheduler_active() -> bool:
             ]
         except OSError:
             continue
-        if not any(Path(value).name == "run_semantic_hash_pipeline.py" for value in parts):
+        # Shell/taiji wrappers may contain the whole launch command as one argv
+        # string.  Count only a real Python script argument, otherwise a clean
+        # restart mistakes its own launcher for another scheduler and exits.
+        script_positions = [
+            index
+            for index, value in enumerate(parts)
+            if Path(value).name == "run_semantic_hash_pipeline.py"
+        ]
+        if not script_positions:
+            continue
+        # The script itself must be a direct argv entry, and the process must
+        # be a Python interpreter rather than timeout/bash/taiji carrying the
+        # command text.  This keeps wrappers from causing a false duplicate.
+        executable = Path(parts[0]).name
+        if not executable.startswith("python"):
             continue
         if "--state-name" in parts:
             index = parts.index("--state-name")
