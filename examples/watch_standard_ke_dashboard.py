@@ -3,17 +3,15 @@
 
 from __future__ import annotations
 
-import argparse, html, json, os, re, subprocess, time
+import argparse, html, json, os, re, statistics, subprocess, time
 from datetime import datetime
 from pathlib import Path
 
 RUNS = [
-    ("CounterFact", "Arithmetic-fixed", "logs/formal_v3_cf_arithmetic_seed42.log", "formal v3 · 345 steps ≈ 5 epochs"),
-    ("CounterFact", "LoRA", "logs/formal_v3_cf_lora_seed42.log", "formal v3 · 345 steps ≈ 5 epochs"),
-    ("CounterFact", "Semantic-RQ", "logs/formal_v3_cf_rq_seed42.log", "queued after validated RQ table"),
-    ("ZsRE", "Arithmetic-fixed", "logs/formal_v3_zsre_arithmetic_seed42.log", "formal v3 · 205 steps = 5 epochs"),
-    ("ZsRE", "Semantic-RQ", "logs/formal_v3_zsre_rq_seed42.log", "queued after validated RQ table"),
-    ("ZsRE", "LoRA", "logs/formal_v3_zsre_lora_seed42.log", "queued · 205 steps = 5 epochs"),
+    (dataset, method, seed, f'logs/formal_v3_{short}_{slug}_seed{seed}.log')
+    for dataset,short in (("CounterFact","cf"),("ZsRE","zsre"))
+    for method,slug in (("Arithmetic-fixed","arithmetic"),("LoRA","lora"),("Semantic-RQ","rq"))
+    for seed in (42,43,44)
 ]
 
 METHOD_LABELS = {
@@ -69,15 +67,33 @@ def result_rows(root: Path) -> str:
         m=d.get('metrics',{})
         dataset=d.get('dataset', path.stem.split('_',1)[0]).lower()
         method=next((name for key,name in METHOD_LABELS.items() if f'_{key}_' in f'_{path.stem}_'), path.stem)
+        seed_match=re.search(r'_seed(\d+)$',path.stem); seed=seed_match.group(1) if seed_match else '—'
         metric_names=('ES','PS','NS') if dataset == 'counterfact' else ('EA','PA','NA')
         den=d.get('denominators',{})
         denominator='<br>'.join(f'{name}: {den.get(key,"—"):,}' if isinstance(den.get(key),(int,float)) else f'{name}: —' for name,key in zip(metric_names,('efficacy','paraphrase','specificity')))
         score=SCORING_LABELS.get(d.get('scoring'), d.get('scoring','—'))
-        rows.append('<tr><th>%s</th><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="small">%s</td></tr>' % (
-            'CounterFact' if dataset == 'counterfact' else 'ZsRE', html.escape(method), d.get('examples','—'),
+        rows.append('<tr><th>%s</th><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="small">%s</td></tr>' % (
+            'CounterFact' if dataset == 'counterfact' else 'ZsRE', html.escape(method), seed, d.get('examples','—'),
             *(f"{100*m.get(k):.2f}" if isinstance(m.get(k),(int,float)) else '—' for k in ('efficacy','paraphrase','specificity','harmonic_score')),
             denominator, html.escape(score)))
-    return ''.join(rows) or '<tr><td colspan="9">正式全集评测尚未完成；这里不会填入 smoke-test 数字。</td></tr>'
+    return ''.join(rows) or '<tr><td colspan="10">正式全集评测尚未完成；这里不会填入 smoke-test 数字。</td></tr>'
+
+def aggregate_rows(root: Path) -> str:
+    rows=[]
+    for dataset in ('counterfact','zsre'):
+        for method in ('arithmetic','lora','rq'):
+            runs=[]
+            for seed in (42,43,44):
+                try: d=json.loads((root/f'{dataset}_{method}_seed{seed}.json').read_text())
+                except Exception: continue
+                if d.get('status') == 'complete' and d.get('complete_official_split'):
+                    runs.append(d['metrics'])
+            values=[]
+            for key in ('efficacy','paraphrase','specificity','harmonic_score'):
+                xs=[100*r[key] for r in runs]
+                values.append(f'{statistics.mean(xs):.2f} ± {statistics.stdev(xs):.2f}' if len(xs) == 3 else '等待 3 seeds')
+            rows.append(f'<tr><th>{"CounterFact" if dataset=="counterfact" else "ZsRE"}</th><td>{METHOD_LABELS[method]}</td><td>{len(runs)}/3</td>'+''.join(f'<td>{v}</td>' for v in values)+'</tr>')
+    return ''.join(rows)
 
 def conclusions(root: Path) -> str:
     results={}
@@ -99,7 +115,7 @@ def conclusions(root: Path) -> str:
     return ''.join(items)
 
 def completion(root: Path) -> str:
-    expected={f'{dataset}_{method}_seed42.json' for dataset in ('counterfact','zsre') for method in ('base','arithmetic','lora','rq')}
+    expected={f'{dataset}_{method}_seed{seed}.json' for dataset in ('counterfact','zsre') for method in ('arithmetic','lora','rq') for seed in (42,43,44)} | {f'{dataset}_base_seed42.json' for dataset in ('counterfact','zsre')}
     complete=0
     for name in expected:
         try: d=json.loads((root/name).read_text())
@@ -108,12 +124,12 @@ def completion(root: Path) -> str:
     return f'{complete}/{len(expected)} complete'
 
 def render(root: Path) -> str:
-    run_rows=''.join(f'<tr><th>{d}</th><td>{m}</td><td>{s}</td><td>{progress(Path(l))[0]}</td><td>{progress(Path(l))[1]}</td><td><code>{l}</code></td></tr>' for d,m,l,s in RUNS)
+    run_rows=''.join(f'<tr><th>{d}</th><td>{m}</td><td>{s}</td><td>{progress(Path(l))[0]}</td><td>{progress(Path(l))[1]}</td><td><code>{l}</code></td></tr>' for d,m,s,l in RUNS)
     proc_rows=''.join(f'<tr><th>{p}</th><td>{g}</td><td class="cmd">{html.escape(c)}</td></tr>' for p,g,c in processes())
     build=read(Path('logs/build_rq_M8K1024_300k.log'))
     stage='complete' if 'meta.json' in build or '[done]' in build.lower() else ('RQ fitting / writing' if '[rq]' in build else 'embedding')
     now=datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
-    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="refresh" content="15"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic Hash · Formal Benchmarks</title><style>*{{box-sizing:border-box}}body{{margin:0;background:#f4f1e9;color:#17201d;font:14px/1.55 system-ui,"PingFang SC",sans-serif}}main{{max-width:1400px;margin:auto;padding:34px 24px 80px}}header{{display:flex;justify-content:space-between;border-bottom:2px solid;padding-bottom:16px}}h1{{font:38px Georgia;margin:4px 0}}h2{{margin:28px 0 10px}}.kicker{{color:#176b4d;font-weight:800;letter-spacing:.12em}}.muted{{color:#66716b}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}}.card,.box{{background:#fffdf7;border:1px solid #d8d2c5;border-radius:12px}}.card{{padding:15px}}.card strong{{display:block;font:23px Georgia;color:#176b4d}}.box{{overflow:auto;padding:0}}.notes{{padding:12px 22px}}table{{border-collapse:collapse;width:100%;min-width:900px}}th,td{{padding:10px 12px;border-bottom:1px solid #ddd6c8;text-align:left;vertical-align:top}}thead th{{font-size:12px;color:#66716b;background:#f8f5ee}}.bad{{color:#9b2c2c}}code{{color:#245ca4}}.cmd{{font:12px ui-monospace;max-width:900px}}.small{{font-size:12px;color:#59635e}}@media(max-width:850px){{.cards{{grid-template-columns:repeat(2,1fr)}}}}</style></head><body><main><header><div><div class="kicker">FULL OFFICIAL BENCHMARKS · LIVE</div><h1>Semantic-Hash Engram</h1><div class="muted">canonical-only target supervision；dataset-specific official scoring；evaluation-only paraphrase/locality</div></div><div class="muted">{now}<br>15 秒刷新</div></header><section class="cards"><div class="card"><b>CounterFact</b><strong>2,191 cases</strong><span>ES / PS / NS / Harmonic</span></div><div class="card"><b>ZsRE</b><strong>1,301 edits</strong><span>EA / PA / NA / Harmonic</span></div><div class="card"><b>正式矩阵</b><strong>{completion(root)}</strong><span>Base / LoRA / Arithmetic / Semantic-RQ</span></div><div class="card"><b>结果门槛</b><strong>No smoke tests</strong><span>只有完整官方 split 才进入正式结果表</span></div></section><h2>实验协议</h2><div class="box"><table><tbody><tr><th>写入 setting</th><td>完整 benchmark canonical edits 批量写入同一 memory；不是逐样本重建模型</td></tr><tr><th>训练隔离</th><td>仅 canonical prompt → new target；prompt labels=-100；paraphrase/locality evaluation-only</td></tr><tr><th>训练预算</th><td>统一 5 次数据遍历：CounterFact 345 optimizer steps；ZsRE 205 optimizer steps；effective batch=32</td></tr><tr><th>CounterFact scoring</th><td>完整 target 的逐 token mean log-likelihood；new target 优于原 target；ES / PS / NS 的分母是 prompts</td></tr><tr><th>ZsRE scoring</th><td>teacher-forced 逐 target-token accuracy；EA / PA / NA 的分母是 target tokens</td></tr><tr><th>RQ 地址</th><td>{stage}；FineWeb-Edu 2/3-gram 各 300k，M=8/K=1024；unseen n-gram 在线 embedding→RQ，首次写入持久 cache，后续直接命中</td></tr><tr><th>比较</th><td>Base / LoRA / Arithmetic-fixed / Semantic-RQ；同底座、层、容量、数据遍历数与 seed</td></tr><tr><th>有效性审计</th><td class="bad">v1/v2：静态 fallback、首 token、prompt-label 覆盖、legacy hash 覆盖、错误数据规模/预算，全部排除</td></tr></tbody></table></div><h2>当前可支持的结论</h2><div class="box notes"><ul>{conclusions(root)}</ul></div><h2>GPU</h2><div class="cards">{gpus()}</div><h2>训练与队列</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>状态</th><th>Step</th><th>Loss</th><th>日志</th></tr></thead><tbody>{run_rows}</tbody></table></div><h2>正式完整结果（%，seed 42）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>Cases</th><th>Efficacy<br>ES / EA</th><th>Paraphrase<br>PS / PA</th><th>Specificity<br>NS / NA</th><th>Harmonic</th><th>实际分母</th><th>核心评分口径</th></tr></thead><tbody>{result_rows(root)}</tbody></table></div><h2>真实进程</h2><div class="box"><table><thead><tr><th>PID</th><th>GPU</th><th>Command</th></tr></thead><tbody>{proc_rows}</tbody></table></div></main></body></html>'''
+    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="refresh" content="15"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Semantic Hash · Formal Benchmarks</title><style>*{{box-sizing:border-box}}body{{margin:0;background:#f4f1e9;color:#17201d;font:14px/1.55 system-ui,"PingFang SC",sans-serif}}main{{max-width:1400px;margin:auto;padding:34px 24px 80px}}header{{display:flex;justify-content:space-between;border-bottom:2px solid;padding-bottom:16px}}h1{{font:38px Georgia;margin:4px 0}}h2{{margin:28px 0 10px}}.kicker{{color:#176b4d;font-weight:800;letter-spacing:.12em}}.muted{{color:#66716b}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}}.card,.box{{background:#fffdf7;border:1px solid #d8d2c5;border-radius:12px}}.card{{padding:15px}}.card strong{{display:block;font:23px Georgia;color:#176b4d}}.box{{overflow:auto;padding:0}}.notes{{padding:12px 22px}}table{{border-collapse:collapse;width:100%;min-width:900px}}th,td{{padding:10px 12px;border-bottom:1px solid #ddd6c8;text-align:left;vertical-align:top}}thead th{{font-size:12px;color:#66716b;background:#f8f5ee}}.bad{{color:#9b2c2c}}code{{color:#245ca4}}.cmd{{font:12px ui-monospace;max-width:900px}}.small{{font-size:12px;color:#59635e}}@media(max-width:850px){{.cards{{grid-template-columns:repeat(2,1fr)}}}}</style></head><body><main><header><div><div class="kicker">FULL OFFICIAL BENCHMARKS · LIVE</div><h1>Semantic-Hash Engram</h1><div class="muted">canonical-only target supervision；dataset-specific official scoring；evaluation-only paraphrase/locality</div></div><div class="muted">{now}<br>15 秒刷新</div></header><section class="cards"><div class="card"><b>CounterFact</b><strong>2,191 cases</strong><span>ES / PS / NS / Harmonic</span></div><div class="card"><b>ZsRE</b><strong>1,301 edits</strong><span>EA / PA / NA / Harmonic</span></div><div class="card"><b>正式矩阵</b><strong>{completion(root)}</strong><span>3 seeds × core methods；Base seed42</span></div><div class="card"><b>结果门槛</b><strong>No smoke tests</strong><span>只有完整官方 split 才进入正式结果表</span></div></section><h2>实验协议</h2><div class="box"><table><tbody><tr><th>写入 setting</th><td>完整 benchmark canonical edits 批量写入同一 memory；不是逐样本重建模型</td></tr><tr><th>训练隔离</th><td>仅 canonical prompt → new target；prompt labels=-100；paraphrase/locality evaluation-only</td></tr><tr><th>训练预算</th><td>统一 5 次数据遍历：CounterFact 345 optimizer steps；ZsRE 205 optimizer steps；effective batch=32</td></tr><tr><th>CounterFact scoring</th><td>完整 target 的逐 token mean log-likelihood；new target 优于原 target；ES / PS / NS 的分母是 prompts</td></tr><tr><th>ZsRE scoring</th><td>teacher-forced 逐 target-token accuracy；EA / PA / NA 的分母是 target tokens</td></tr><tr><th>RQ 地址</th><td>{stage}；FineWeb-Edu 2/3-gram 各 300k，M=8/K=1024；unseen n-gram 在线 embedding→RQ，首次写入持久 cache，后续直接命中</td></tr><tr><th>比较</th><td>Base / LoRA / Arithmetic-fixed / Semantic-RQ；同底座、层、容量、数据遍历数；核心方法 seeds 42/43/44</td></tr><tr><th>有效性审计</th><td class="bad">v1/v2：静态 fallback、首 token、prompt-label 覆盖、legacy hash 覆盖、错误数据规模/预算，全部排除</td></tr></tbody></table></div><h2>当前可支持的结论</h2><div class="box notes"><ul>{conclusions(root)}</ul></div><h2>GPU</h2><div class="cards">{gpus()}</div><h2>三 Seed 正式汇总（mean ± sample std，%）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>Seeds</th><th>Efficacy</th><th>Paraphrase</th><th>Specificity</th><th>Harmonic</th></tr></thead><tbody>{aggregate_rows(root)}</tbody></table></div><h2>训练与队列</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>Seed</th><th>Step</th><th>Loss</th><th>日志</th></tr></thead><tbody>{run_rows}</tbody></table></div><h2>正式完整结果（%）</h2><div class="box"><table><thead><tr><th>Benchmark</th><th>方法</th><th>Seed</th><th>Cases</th><th>Efficacy<br>ES / EA</th><th>Paraphrase<br>PS / PA</th><th>Specificity<br>NS / NA</th><th>Harmonic</th><th>实际分母</th><th>核心评分口径</th></tr></thead><tbody>{result_rows(root)}</tbody></table></div><h2>真实进程</h2><div class="box"><table><thead><tr><th>PID</th><th>GPU</th><th>Command</th></tr></thead><tbody>{proc_rows}</tbody></table></div></main></body></html>'''
 
 def main() -> None:
     p=argparse.ArgumentParser(); p.add_argument('--root',type=Path,default=Path('outputs/standard_ke_v3')); p.add_argument('--output',type=Path,required=True); p.add_argument('--interval',type=float,default=15); a=p.parse_args()
