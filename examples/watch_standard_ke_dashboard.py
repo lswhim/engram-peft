@@ -71,7 +71,7 @@ def gpus() -> str:
 def rq_cache_status() -> str:
     base=Path('rq_tables/fineweb_M8K1024_300k_strict')
     parts=[]
-    for seed,name in ((42,'runtime_cache_v3.sqlite'),(43,'runtime_cache_v3_seed43'),(44,'runtime_cache_v3_seed44')):
+    for seed,name in ((42,'runtime_cache_v3_seed42'),(43,'runtime_cache_v3_seed43'),(44,'runtime_cache_v3_seed44')):
         db=base/name/'semantic_codes.sqlite3'
         counts={2:0,3:0}
         if db.exists():
@@ -170,7 +170,8 @@ def conclusions(root: Path) -> str:
     rq_done=all((root/f'{ds}_rq_seed42.json').exists() for ds in ('counterfact','zsre'))
     if not rq_done:
         items.append('<li><b>Semantic-RQ 主结论尚未形成：</b>RQ 的完整官方评测未全部完成，当前不能据 Arithmetic/LoRA 推断 semantic hash 有效或无效。</li>')
-    items.append('<li><b>效率口径：</b>RQ seeds 42/43 在进程启动时使用逐 key SQLite 热查询实现，只用于效果；seed44 起启用等价的进程内地址 cache。最终 latency/throughput 将用同一代码、同一已预热 cache 单独复测，不混用当前训练 wall-clock。</li>')
+    items.append('<li><b>修复后重跑：</b>RQ seeds 42/43/44 均从空的独立持久 cache 重新开始，离线表外 n-gram 执行 encoder→RQ，随后同时写入 SQLite 与进程内热 cache；旧协议中途产物不进入结果表。</li>')
+    items.append('<li><b>效率口径：</b>当前训练 wall-clock 包含首次遇到 n-gram 的 embedding/RQ 成本，不作为最终推理延迟。latency/throughput 将在三方法同代码、同 batch、同序列及已预热 cache 下单独复测。</li>')
     complete_seed_counts=[]
     for ds in ('counterfact','zsre'):
         for method in ('arithmetic','lora','rq'):
