@@ -68,6 +68,19 @@ def render_wiki(root: Path, output: Path) -> dict:
             ax.set(title=axis.title(),xlabel="Cumulative writes",ylabel="Target-token accuracy (%)",xscale="log",xticks=POINTS)
             ax.get_xaxis().set_major_formatter(plt.ScalarFormatter()); ax.grid(alpha=.25)
     axes[0].legend(); fig.savefig(output/"wikibigedit_scaling_curves.png",dpi=220); plt.close(fig)
+    fig,axes=plt.subplots(1,2,figsize=(10,4),sharex=True,constrained_layout=True)
+    for method in METHODS:
+        for ax,axis in zip(axes,("efficacy","generalization"),strict=True):
+            xs=[]; ys=[]
+            for point in POINTS:
+                path=root/method/f"at_{point}.json"
+                if not path.is_file(): continue
+                metric=load(path)["metrics"].get(f"cohort/1000/{axis}")
+                if metric: xs.append(point); ys.append(100*metric["mean"])
+            ax.plot(xs,ys,marker="o",label=LABELS[method])
+            ax.set(title=f"Oldest 1K cohort: {axis}",xlabel="Cumulative writes",ylabel="Target-token accuracy (%)",xscale="log",xticks=POINTS)
+            ax.get_xaxis().set_major_formatter(plt.ScalarFormatter()); ax.grid(alpha=.25)
+    axes[0].legend(); fig.savefig(output/"wikibigedit_retention_curves.png",dpi=220); plt.close(fig)
     return summary
 
 
