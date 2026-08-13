@@ -24,6 +24,19 @@ do
   sleep 20
 done
 
+for task in wikitext lambada; do
+  output="$output_dir/semantic_rq_seed43_${task}.json"
+  log="$log_dir/standard_lm_semantic_rq_seed43_${task}.log"
+  [[ -s "$output" ]] && continue
+  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
+    examples/evaluate_standard_lm.py \
+    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
+    --tasks "$task" --method semantic_rq --seed 43 --batch-size 1 \
+    --result-suffix "$suffix" --output "$output" > "$log" 2>&1
+done
+
 gate_b_output="outputs/semantic_hash_paper/qqp_paws/semantic_rq_seed43.json"
 gate_b_log="outputs/semantic_hash_paper/logs/qqp_paws_semantic_rq_seed43.log"
 if [[ ! -s "$gate_b_output" ]]; then
@@ -38,6 +51,45 @@ if [[ ! -s "$gate_b_output" ]]; then
     --output "$gate_b_output" > "$gate_b_log" 2>&1
 fi
 
+for method_seed_suffix in \
+  "base 43 none" \
+  "arithmetic_matched 43 _paper_gate1_fineweb_100m_fixedsteps_arithmetic_matched_seed43"
+do
+  read -r gate_method gate_seed gate_suffix <<< "$method_seed_suffix"
+  gate_b_output="outputs/semantic_hash_paper/qqp_paws/${gate_method}_seed${gate_seed}.json"
+  [[ -s "$gate_b_output" ]] && continue
+  suffix_args=()
+  [[ "$gate_suffix" != none ]] && suffix_args=(--result-suffix "$gate_suffix")
+  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
+    examples/run_qqp_paws_frozen.py \
+    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
+    --method "$gate_method" --seed "$gate_seed" "${suffix_args[@]}" \
+    --batch-size 16 --eval-batch-size 16 --num-workers 4 \
+    --output "$gate_b_output" \
+    > "$log_dir/qqp_paws_${gate_method}_seed${gate_seed}.log" 2>&1
+done
+
+for c4_spec in \
+  "semantic_rq 42 _paper_gate1_fineweb_100m_fixedsteps_semantic_rq_seed42" \
+  "arithmetic_matched 42 _paper_gate1_fineweb_100m_fixedsteps_arithmetic_matched_seed42" \
+  "arithmetic_matched 43 _paper_gate1_fineweb_100m_fixedsteps_arithmetic_matched_seed43"
+do
+  read -r c4_method c4_seed c4_suffix <<< "$c4_spec"
+  c4_output="$output_dir/${c4_method}_seed${c4_seed}_c4.json"
+  [[ -s "$c4_output" ]] && continue
+  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
+  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
+    examples/evaluate_standard_lm.py \
+    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
+    --tasks c4 --method "$c4_method" --seed "$c4_seed" --batch-size 1 \
+    --result-suffix "$c4_suffix" --output "$c4_output" \
+    > "$log_dir/standard_lm_${c4_method}_seed${c4_seed}_c4.log" 2>&1
+done
+
 c4_output="$output_dir/semantic_rq_seed43_c4.json"
 if [[ ! -s "$c4_output" ]]; then
   CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -49,16 +101,3 @@ if [[ ! -s "$c4_output" ]]; then
     --result-suffix "$suffix" --output "$c4_output" \
     > "$log_dir/standard_lm_semantic_rq_seed43_c4.log" 2>&1
 fi
-
-for task in wikitext lambada; do
-  output="$output_dir/semantic_rq_seed43_${task}.json"
-  log="$log_dir/standard_lm_semantic_rq_seed43_${task}.log"
-  [[ -s "$output" ]] && continue
-  CUDA_VISIBLE_DEVICES=2 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-  HTTPS_PROXY=http://star-proxy.oa.com:3128 HTTP_PROXY=http://star-proxy.oa.com:3128 \
-  /anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python -u \
-    examples/evaluate_standard_lm.py \
-    --model /anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base \
-    --tasks "$task" --method semantic_rq --seed 43 --batch-size 1 \
-    --result-suffix "$suffix" --output "$output" > "$log" 2>&1
-done

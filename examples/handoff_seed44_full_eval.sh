@@ -5,6 +5,20 @@ if [[ $# -ne 3 ]]; then
   echo "usage: $0 METHOD GPU RESULT_SUFFIX" >&2
   exit 2
 fi
+
+if [[ "$method" == "rq_shuffled" ]]; then
+  for base_seed in 44; do
+    base_output="outputs/semantic_hash_paper/qqp_paws/base_seed${base_seed}.json"
+    [[ -s "$base_output" ]] && continue
+    CUDA_VISIBLE_DEVICES="$gpu" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+    HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    PYTHONPATH=/anguszhang-cfs-nj/seokliu_workspace/engram/src:/anguszhang-cfs-nj/seokliu_workspace/engram \
+    "$python" -u examples/run_qqp_paws_frozen.py \
+      --model "$model" --method base --seed "$base_seed" \
+      --batch-size 16 --eval-batch-size 16 --num-workers 4 \
+      --output "$base_output" > "$log_dir/qqp_paws_base_seed${base_seed}.log" 2>&1
+  done
+fi
 method="$1"
 gpu="$2"
 suffix="$3"
