@@ -68,6 +68,15 @@ def test_lazy_semantic_codes_are_used_on_first_access_and_persisted(
     np.testing.assert_array_equal(actual[0, 1], [7, 1])
     assert calls == [(2, [109])]
 
+    # A hot lookup must use the process-local cache, not issue another SQLite query or
+    # invoke the semantic encoder.
+    statements: list[str] = []
+    first._cache.set_trace_callback(statements.append)
+    again_hot = first.hash(inputs, original_ids=originals)[0]
+    np.testing.assert_array_equal(again_hot, actual)
+    assert calls == [(2, [109])]
+    assert not any(statement.startswith("SELECT") for statement in statements)
+
     calls.clear()
     reopened = RQNgramMapping(str(tmp_path / "table"), pad_id=0, cache_dir=str(cache))
     again = reopened.hash(inputs, original_ids=originals)[0]

@@ -50,6 +50,9 @@ class RQNgramMapping:
     codes: dict[int, np.ndarray] = field(init=False)
     total_heads: int = field(init=False)
     _cache: sqlite3.Connection | None = field(init=False, default=None, repr=False)
+    _runtime_codes: dict[int, dict[int, np.ndarray]] = field(
+        init=False, default_factory=dict, repr=False
+    )
     _tokenizer: Any = field(init=False, default=None, repr=False)
     _embedder: Any = field(init=False, default=None, repr=False)
     _rq_indices: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
@@ -89,6 +92,12 @@ class RQNgramMapping:
                 "PRIMARY KEY (n, key))"
             )
             self._cache.commit()
+            self._runtime_codes = {n: {} for n in self.ngram_sizes}
+            for n, key, code in self._cache.execute("SELECT n, key, code FROM codes"):
+                if int(n) in self._runtime_codes:
+                    self._runtime_codes[int(n)][int(key)] = np.frombuffer(
+                        code, dtype=np.uint16
+                    ).astype(np.int64)
 
     # --- mirrors NgramHashMapping field used by MultiHeadEmbedding sizing ---
     @property
@@ -174,6 +183,9 @@ class RQNgramMapping:
             ],
         )
         self._cache.commit()
+        self._runtime_codes[n].update(
+            {int(key): code.copy() for key, code in zip(keys, codes, strict=True)}
+        )
         return codes
 
     def _codes_for_ngram_size(
@@ -206,14 +218,11 @@ class RQNgramMapping:
                 [original_padded[:, i : i + length] for i in range(n)], axis=-1
             )
             missing_keys, inverse = np.unique(keys[~hit], return_inverse=True)
-            cached: dict[int, np.ndarray] = {}
-            if self._cache is not None:
-                for key in missing_keys:
-                    row = self._cache.execute(
-                        "SELECT code FROM codes WHERE n=? AND key=?", (n, int(key))
-                    ).fetchone()
-                    if row is not None:
-                        cached[int(key)] = np.frombuffer(row[0], dtype=np.uint16).astype(np.int64)
+            cached = {
+                int(key): self._runtime_codes[n][int(key)]
+                for key in missing_keys
+                if int(key) in self._runtime_codes.get(n, {})
+            }
             needs = [i for i, key in enumerate(missing_keys) if int(key) not in cached]
             if needs:
                 flat_keys = keys.reshape(-1)
@@ -221,6 +230,12 @@ class RQNgramMapping:
                 first_positions = {int(key): int(np.flatnonzero(flat_keys == key)[0]) for key in missing_keys[needs]}
                 new_windows = np.stack([flat_original[first_positions[int(missing_keys[i])]] for i in needs])
                 new_codes = self._encode_missing(n, missing_keys[needs], new_windows)
+                self._runtime_codes.setdefault(n, {}).update(
+                    {
+                        int(missing_keys[i]): code.copy()
+                        for i, code in zip(needs, new_codes, strict=True)
+                    }
+                )
                 cached.update({int(missing_keys[i]): code for i, code in zip(needs, new_codes, strict=True)})
             unique_codes = np.stack([cached[int(key)] for key in missing_keys])
             out[~hit] = unique_codes[inverse]
