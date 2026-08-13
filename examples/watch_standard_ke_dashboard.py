@@ -67,5 +67,9 @@ def render(root: Path) -> str:
 def main() -> None:
     p=argparse.ArgumentParser(); p.add_argument('--root',type=Path,default=Path('outputs/standard_ke')); p.add_argument('--output',type=Path,required=True); p.add_argument('--interval',type=float,default=15); a=p.parse_args()
     while True:
-        a.output.parent.mkdir(parents=True,exist_ok=True); tmp=a.output.with_suffix('.tmp'); tmp.write_text(render(a.root)); os.replace(tmp,a.output); time.sleep(a.interval)
+        a.output.parent.mkdir(parents=True,exist_ok=True)
+        tmp=a.output.with_suffix('.tmp'); tmp.write_text(render(a.root)); os.replace(tmp,a.output)
+        snapshot={"updated_at":datetime.now().astimezone().isoformat(),"all_complete":False,"kind":"formal_standard_ke"}
+        json_tmp=a.output.with_suffix('.json.tmp'); json_tmp.write_text(json.dumps(snapshot)); os.replace(json_tmp,a.output.with_suffix('.json'))
+        time.sleep(a.interval)
 if __name__=='__main__': main()
