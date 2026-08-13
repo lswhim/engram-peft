@@ -400,8 +400,24 @@ def collect(output_dir: Path) -> dict[str, Any]:
         intervention_root / "comparison.json"
     )
     standard_root = output_dir / "standard_lm"
+    base_standard = read_json(standard_root / "base_seed42.json")
+    # Public benchmarks may be run separately so one unavailable dataset does
+    # not discard completed results from the others. Merge their lm-eval
+    # payloads into the row consumed by the dashboard.
+    for split_path in sorted(standard_root.glob("base_seed42_*.json")):
+        split_payload = read_json(split_path)
+        if split_payload.get("status") != "complete":
+            continue
+        if not base_standard:
+            base_standard = {"status": "complete", "results": {}}
+        base_standard.setdefault("results", {}).update(
+            split_payload.get("results", {})
+        )
+        base_standard.setdefault("benchmark_files", []).append(str(split_path))
+    if base_standard.get("results"):
+        base_standard["status"] = "complete"
     standard_lm = {
-        "base_seed42": read_json(standard_root / "base_seed42.json"),
+        "base_seed42": base_standard,
         **{
             f"{method}_seed{seed}": read_json(
                 standard_root / f"{method}_seed{seed}.json"
@@ -1350,14 +1366,32 @@ def render(snapshot: dict[str, Any]) -> str:
                 continue
             completed_standard_rows.append(
                 f"<tr><th>{labels[method]}</th><td>{seed}</td>"
-                f"<td>{fmt(standard_metric(payload, 'paloma_wikitext_103', ('word_perplexity,none', 'word_perplexity')), 3)}</td>"
-                f"<td>{fmt(standard_metric(payload, 'paloma_c4_en', ('word_perplexity,none', 'word_perplexity')), 3)}</td>"
+                f"<td>{fmt(standard_metric(payload, 'wikitext', ('word_perplexity,none', 'word_perplexity')), 3)}</td>"
+                f"<td>{fmt(standard_metric(payload, 'c4', ('word_perplexity,none', 'word_perplexity', 'perplexity,none', 'perplexity')), 3)}</td>"
                 f"<td>{fmt(standard_metric(payload, 'lambada_openai', ('acc,none', 'acc')), 4)}</td>"
                 f"<td>{fmt(standard_metric(payload, 'lambada_openai', ('perplexity,none', 'perplexity')), 3)}</td></tr>"
             )
     standard_body = "".join(completed_standard_rows) or (
         '<tr><td colspan="6" class="empty">等待公平 matched checkpoints 完成；完成后立即运行公开 LM benchmark。</td></tr>'
     )
+    base_payload = snapshot.get("standard_lm", {}).get("base_seed42", {})
+    base_lambada_acc = standard_metric(
+        base_payload, "lambada_openai", ("acc,none", "acc")
+    )
+    base_lambada_ppl = standard_metric(
+        base_payload,
+        "lambada_openai",
+        ("perplexity,none", "perplexity"),
+    )
+    if base_lambada_acc is not None:
+        base_status_badge = '<span class="pill done">LAMBADA 已完成</span>'
+        base_status_text = (
+            f"LAMBADA Base：Accuracy {base_lambada_acc:.2%}，"
+            f"PPL {base_lambada_ppl:.3f}；结果已进入 Gate A 主表。"
+        )
+    else:
+        base_status_badge = '<span class="pill run">LAMBADA 运行中</span>'
+        base_status_text = "当前先跑 LAMBADA；完成后结果自动进入 Gate A 主表。"
     xnli = snapshot.get("external", {}).get("xnli", {})
     arithmetic_xnli = [
         xnli.get("corrected_matched_seed42"),
@@ -1397,7 +1431,7 @@ def render(snapshot: dict[str, Any]) -> str:
 <style>:root{{--paper:#f3f0e8;--ink:#17201d;--muted:#68716c;--card:#fffdf8;--line:#d8d3c7;--green:#176b4d;--blue:#235ca5;--amber:#9a6015;--red:#a43636}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 Inter,ui-sans-serif,system-ui,"PingFang SC",sans-serif}}main{{max-width:1320px;margin:auto;padding:38px 24px 80px}}header{{display:flex;justify-content:space-between;gap:24px;align-items:end;border-bottom:2px solid var(--ink);padding-bottom:18px}}h1{{font-family:Georgia,serif;font-size:38px;line-height:1;margin:0}}h2{{font-size:20px;margin:34px 0 11px}}.kicker{{text-transform:uppercase;letter-spacing:.14em;color:var(--green);font-weight:800;font-size:12px}}.meta,.muted{{color:var(--muted)}}.verdicts,.gpus{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}}.experiments{{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}}.experiment{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}}.experiment h3{{margin:0 0 10px;font-size:16px}}.experiment dl{{display:grid;grid-template-columns:72px 1fr;gap:6px 10px;margin:0}}.experiment dt{{font-weight:800;color:var(--muted)}}.experiment dd{{margin:0}}.verdict{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:17px;min-height:122px}}.verdict.primary{{border-top:4px solid var(--green)}}.verdict b{{display:block;font-size:13px;margin-bottom:9px}}.verdict strong{{font-family:Georgia,serif;font-size:23px;line-height:1.12}}.gpu{{background:#1d2924;color:#f8f5ec;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center}}.gpu span{{color:#b9c7c0}}.gpu strong{{font-size:23px}}.box{{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}th,td{{padding:11px 13px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}}th:first-child,td:first-child{{text-align:left}}thead th{{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#f7f4ed}}.pill{{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800}}.done{{color:var(--green);background:#dcefe6}}.run{{color:var(--blue);background:#e2ebf8}}.wait{{color:var(--amber);background:#f6ead7}}.fail{{color:var(--red);background:#f6dddd}}.empty{{text-align:center!important;color:var(--muted);padding:26px}}details{{margin-top:24px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px}}summary{{cursor:pointer;font-weight:800}}code{{color:var(--blue)}}@media(max-width:900px){{.verdicts,.gpus,.experiments{{grid-template-columns:repeat(2,1fr)}}header{{display:block}}}}@media(max-width:620px){{.experiments{{grid-template-columns:1fr}}}}</style></head>
 <body><main><header><div><div class="kicker">Benchmark-first · live report</div><h1>Semantic Hash for Engram</h1><div class="meta">公开 benchmark 先判生死，机制实验后置</div></div><div class="meta">更新于 {html.escape(snapshot['updated_at'])}<br>自动刷新：15 秒</div></header>
 <section class="verdicts"><div class="verdict primary"><b>当前总判断</b><strong>尚无公开 benchmark 正向结论</strong><p class="muted">地址几何成立，但实际收益等待 Gate A / Gate B。</p></div><div class="verdict"><b>XNLI 附录诊断</b><strong>基本持平</strong><p class="muted">{html.escape(xnli_summary)}</p></div><div class="verdict"><b>地址几何</b><strong>结构信号明确</strong><p class="muted">2g ρ=.738 vs .006；3g ρ=.699 vs −.011。不能替代 benchmark。</p></div><div class="verdict"><b>下一决策点</b><strong>标准 LM Gate A</strong><p class="muted">WikiText-103、C4 validation、LAMBADA、FineWeb held-out。</p></div></section>
-<h2>现在每个实验在做什么</h2><div class="experiments"><article class="experiment"><h3>① 公平 checkpoint 训练 <span class="pill run">运行中</span></h3><dl><dt>目的</dt><dd>获得三种地址方法可直接比较的完整模型。</dd><dt>协议</dt><dd>冻结 Qwen3-1.7B，只训练 Engram；FineWeb-Edu；12,208 steps；3 seeds。</dd><dt>对照</dt><dd>Arithmetic-fixed、RQ-Shuffled、Semantic-RQ；参数与表容量严格一致。</dd><dt>成功标准</dt><dd>这里只产出 checkpoint，不用不同 step 的中间 loss 下结论。</dd></dl></article><article class="experiment"><h3>② Base 公开 LM 基线 <span class="pill run">LAMBADA 运行中</span></h3><dl><dt>目的</dt><dd>测没有 Engram 时 Qwen3-1.7B 的公开 benchmark 基准线。</dd><dt>协议</dt><dd>当前先跑 LAMBADA；WikiText-103 与 C4 改用无需授权的公开数据协议。</dd><dt>对照</dt><dd>后续所有 Arithmetic、Shuffled、Semantic checkpoint 与同一 Base 比较。</dd><dt>状态</dt><dd>原 Paloma 入口因数据集 gated 已失败并废弃，不计为结果。</dd></dl></article><article class="experiment"><h3>③ Gate A：标准语言建模 <span class="pill wait">等待 checkpoint</span></h3><dl><dt>目的</dt><dd>直接判断 Semantic Hash 是否带来公开 LM 收益。</dd><dt>任务</dt><dd>WikiText-103、C4 validation、LAMBADA、FineWeb held-out。</dd><dt>成功标准</dt><dd>Semantic-RQ 同时优于 Arithmetic 和 Shuffled，至少两个 benchmark 方向一致。</dd><dt>失败处理</dt><dd>若持平或退化，不用地址几何包装成方法提升。</dd></dl></article><article class="experiment"><h3>④ Gate B：QQP → PAWS <span class="pill wait">尚未启动</span></h3><dl><dt>目的</dt><dd>验证公开 paraphrase OOD 泛化，而不是自建“语义泛化”样本。</dd><dt>协议</dt><dd>QQP 训练；QQP in-domain 与 PAWS-QQP zero-update 测试。</dd><dt>对照</dt><dd>Base、Arithmetic、RQ-Shuffled、Semantic-RQ，各 3 seeds。</dd><dt>成功标准</dt><dd>PAWS 提升且 QQP 不退化；否则不能 claim 语义泛化。</dd></dl></article></div>
+<h2>现在每个实验在做什么</h2><div class="experiments"><article class="experiment"><h3>① 公平 checkpoint 训练 <span class="pill run">运行中</span></h3><dl><dt>目的</dt><dd>获得三种地址方法可直接比较的完整模型。</dd><dt>协议</dt><dd>冻结 Qwen3-1.7B，只训练 Engram；FineWeb-Edu；12,208 steps；3 seeds。</dd><dt>对照</dt><dd>Arithmetic-fixed、RQ-Shuffled、Semantic-RQ；参数与表容量严格一致。</dd><dt>成功标准</dt><dd>这里只产出 checkpoint，不用不同 step 的中间 loss 下结论。</dd></dl></article><article class="experiment"><h3>② Base 公开 LM 基线 {base_status_badge}</h3><dl><dt>目的</dt><dd>测没有 Engram 时 Qwen3-1.7B 的公开 benchmark 基准线。</dd><dt>结果/状态</dt><dd>{base_status_text}</dd><dt>后续协议</dt><dd>WikiText-103 与 C4 改用无需授权的公开数据协议。</dd><dt>对照</dt><dd>后续所有 Arithmetic、Shuffled、Semantic checkpoint 与同一 Base 比较。</dd><dt>废弃项</dt><dd>原 Paloma 入口因数据集 gated 已失败，不计为结果。</dd></dl></article><article class="experiment"><h3>③ Gate A：标准语言建模 <span class="pill wait">等待 checkpoint</span></h3><dl><dt>目的</dt><dd>直接判断 Semantic Hash 是否带来公开 LM 收益。</dd><dt>任务</dt><dd>WikiText-103、C4 validation、LAMBADA、FineWeb held-out。</dd><dt>成功标准</dt><dd>Semantic-RQ 同时优于 Arithmetic 和 Shuffled，至少两个 benchmark 方向一致。</dd><dt>失败处理</dt><dd>若持平或退化，不用地址几何包装成方法提升。</dd></dl></article><article class="experiment"><h3>④ Gate B：QQP → PAWS <span class="pill wait">尚未启动</span></h3><dl><dt>目的</dt><dd>验证公开 paraphrase OOD 泛化，而不是自建“语义泛化”样本。</dd><dt>协议</dt><dd>QQP 训练；QQP in-domain 与 PAWS-QQP zero-update 测试。</dd><dt>对照</dt><dd>Base、Arithmetic、RQ-Shuffled、Semantic-RQ，各 3 seeds。</dd><dt>成功标准</dt><dd>PAWS 提升且 QQP 不退化；否则不能 claim 语义泛化。</dd></dl></article></div>
 <h2>四卡资源</h2><div class="gpus">{''.join(f'<div class="gpu"><div><b>GPU {g["index"]}</b><br><span>{g["used_mib"]}/{g["total_mib"]} MiB</span></div><strong>{g["util"]}%</strong></div>' for g in snapshot['gpus'])}</div>
 <h2>正在运行</h2><div class="box"><table><thead><tr><th>设备</th><th>Runner</th><th>方法</th><th>Seed</th><th>阶段</th><th>Step</th><th>Loss</th><th>PID</th></tr></thead><tbody>{active_rows}</tbody></table></div>
 <h2>公平 Matched Checkpoints · 三 Seed</h2><p class="muted">只有跑满 12,208 steps 的结果有资格进入 benchmark；中间 loss 不做方法横向比较。</p><div class="box"><table><thead><tr><th>方法</th><th>Seed 42</th><th>Seed 43</th><th>Seed 44</th></tr></thead><tbody>{''.join(replication_rows)}</tbody></table></div>
