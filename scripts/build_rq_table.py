@@ -176,6 +176,11 @@ def train_rq(args, emb):
     faiss.omp_set_num_threads(args.rq_train_threads)
     print(f"[rq] faiss omp threads = {faiss.omp_get_max_threads()}")
     d = emb.shape[1]
+    if len(emb) < d:
+        raise ValueError(
+            f"RQ training needs at least embedding_dim samples for the FAISS training "
+            f"path (got {len(emb)} samples, dim={d}); increase max_ngrams_per_size"
+        )
     nbits = int(np.log2(args.codebook_size))
     assert (1 << nbits) == args.codebook_size, "codebook_size must be power of 2"
     rq = faiss.ResidualQuantizer(d, args.num_levels, nbits)
