@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,13 @@ class RQNgramMapping:
     _embedder: Any = field(init=False, default=None, repr=False)
     _rq_indices: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
     _meta: dict[str, Any] = field(init=False, repr=False)
+    _trace_enabled: bool = field(init=False, default=False, repr=False)
+    _traced_rows: set[tuple[int, int, int]] = field(
+        init=False, default_factory=set, repr=False
+    )
+    _traced_row_counts: Counter[tuple[int, int, int]] = field(
+        init=False, default_factory=Counter, repr=False
+    )
 
     def __post_init__(self) -> None:
         with open(os.path.join(self.table_dir, "meta.json")) as f:
@@ -232,8 +240,33 @@ class RQNgramMapping:
             self._codes_for_ngram_size(input_ids, original_ids, n)
             for n in self.ngram_sizes
         ]
+        if self._trace_enabled:
+            for n, ngram_codes in zip(self.ngram_sizes, per_size, strict=True):
+                for level in range(self.num_levels):
+                    self._traced_rows.update(
+                        (n, level, int(code))
+                        for code in np.unique(ngram_codes[..., level])
+                    )
+                    self._traced_row_counts.update(
+                        (n, level, int(code))
+                        for code in ngram_codes[..., level].reshape(-1)
+                    )
         codes = np.concatenate(per_size, axis=-1)  # [B, L, total_heads]
         return _LayerView(codes)
+
+    def start_row_trace(self, *, clear: bool = True) -> None:
+        """Record unique physical memory rows addressed by subsequent forwards."""
+        if clear:
+            self._traced_rows.clear()
+            self._traced_row_counts.clear()
+        self._trace_enabled = True
+
+    def stop_row_trace(self) -> set[tuple[int, int, int]]:
+        self._trace_enabled = False
+        return set(self._traced_rows)
+
+    def traced_row_counts(self) -> dict[tuple[int, int, int], int]:
+        return dict(self._traced_row_counts)
 
 
 class _LayerView(dict):

@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default="Qwen/Qwen3-1.7B")
     parser.add_argument("--rq_table_dir")
+    parser.add_argument("--rq_cache_dir")
     parser.add_argument("--output_dir", default="outputs/xtreme_pawsx")
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -73,6 +74,9 @@ def main() -> None:
     model, trainer_class = build_model(args)
     device = torch.device("cuda")
     model.to(device)
+    row_mapper = getattr(model, "hash_mapping", None)
+    if args.method == "rq" and row_mapper is not None:
+        row_mapper.start_row_trace(clear=True)
     started_at = time.time()
     train_metrics: dict[str, Any] = {}
     if args.method != "base":
@@ -117,6 +121,17 @@ def main() -> None:
         model.save_pretrained(run_dir / "final_model")
         tokenizer.save_pretrained(run_dir / "final_model")
 
+    train_rows = (
+        row_mapper.stop_row_trace()
+        if args.method == "rq" and row_mapper is not None
+        else set()
+    )
+    train_row_counts = (
+        row_mapper.traced_row_counts()
+        if args.method == "rq" and row_mapper is not None
+        else {}
+    )
+
     payload: dict[str, Any] = {
         "status": "evaluating",
         "protocol": "PAWS-X English full train -> 7-language test, zero target updates",
@@ -125,13 +140,42 @@ def main() -> None:
         "train_examples": len(train_raw),
         "train_metrics": train_metrics,
         "languages": {},
+        "row_reuse": {},
     }
     _write_result(result_path, payload)
 
     def record_language(language: str, accuracy: float) -> None:
+        if args.method == "rq" and row_mapper is not None:
+            language_rows = row_mapper.stop_row_trace()
+            language_counts = row_mapper.traced_row_counts()
+            shared = language_rows & train_rows
+            shared_mass = sum(
+                count for row, count in language_counts.items() if row in train_rows
+            )
+            total_mass = sum(language_counts.values())
+            histogram_intersection = sum(
+                min(count, train_row_counts.get(row, 0))
+                for row, count in language_counts.items()
+            )
+            payload["row_reuse"][language] = {
+                "english_train_rows": len(train_rows),
+                "test_rows": len(language_rows),
+                "shared_rows": len(shared),
+                "test_row_reuse_rate": len(shared) / len(language_rows) if language_rows else 0.0,
+                "train_row_coverage_rate": len(shared) / len(train_rows) if train_rows else 0.0,
+                "test_access_mass_on_train_rows": shared_mass / total_mass if total_mass else 0.0,
+                "frequency_histogram_intersection": (
+                    histogram_intersection / total_mass if total_mass else 0.0
+                ),
+            }
         payload["languages"][language] = accuracy
         _write_result(result_path, payload)
         print(f"[PAWS-X] {language}: {accuracy * 100:.2f}", flush=True)
+        if args.method == "rq" and row_mapper is not None:
+            row_mapper.start_row_trace(clear=True)
+
+    if args.method == "rq" and row_mapper is not None:
+        row_mapper.start_row_trace(clear=True)
 
     payload["languages"] = evaluate_all_languages(
         model,

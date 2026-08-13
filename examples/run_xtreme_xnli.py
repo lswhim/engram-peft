@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default="Qwen/Qwen3-1.7B")
     parser.add_argument("--rq_table_dir")
+    parser.add_argument("--rq_cache_dir")
     parser.add_argument("--output_dir", default="outputs/xtreme_xnli")
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -101,8 +102,9 @@ def _engram_config(args: argparse.Namespace, model: Any) -> EngramConfig:
             else "arithmetic"
         ),
         rq_table_dir=args.rq_table_dir if method == "rq" else None,
+        rq_cache_dir=args.rq_cache_dir if method == "rq" else None,
         seed=int(args.seed),
-        use_sparse_embeddings=True,
+        use_sparse_embeddings=False,
     )
 
 

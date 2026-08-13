@@ -73,3 +73,17 @@ def test_lazy_semantic_codes_are_used_on_first_access_and_persisted(
     again = reopened.hash(inputs, original_ids=originals)[0]
     np.testing.assert_array_equal(again, actual)
     assert calls == []
+
+
+def test_row_trace_records_unique_addressed_rows(tmp_path: Path) -> None:
+    _table(tmp_path / "table")
+    mapping = RQNgramMapping(str(tmp_path / "table"), pad_id=0)
+    mapping.start_row_trace()
+    mapping.hash(np.asarray([[1, 2]], dtype=np.int64))
+    assert mapping.stop_row_trace() == {
+        (2, 0, 3),
+        (2, 0, 5),
+        (2, 1, 4),
+        (2, 1, 6),
+    }
+    assert sum(mapping.traced_row_counts().values()) == 4
