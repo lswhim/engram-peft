@@ -10,6 +10,7 @@ import re
 import statistics
 import subprocess
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
