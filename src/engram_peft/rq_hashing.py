@@ -152,13 +152,12 @@ class RQNgramMapping:
                 encoded.append(vectors.float().cpu().numpy())
         vectors_np = np.ascontiguousarray(np.concatenate(encoded).astype(np.float32))
         packed = self._rq_indices[n].sa_encode(vectors_np)
-        bits = np.unpackbits(packed, axis=1, bitorder="big")
+        import faiss
+
         nbits = int(np.log2(self.codebook_size))
-        codes = np.zeros((len(keys), self.num_levels), dtype=np.int64)
-        for level in range(self.num_levels):
-            chunk = bits[:, level * nbits : (level + 1) * nbits]
-            for bit in range(nbits):
-                codes[:, level] = (codes[:, level] << 1) | chunk[:, bit]
+        codes = np.asarray(
+            faiss.unpack_bitstrings(packed, self.num_levels, nbits), dtype=np.int64
+        )
         self._cache.executemany(
             "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
             [

@@ -158,16 +158,9 @@ def embed_texts(args, texts):
 
 
 def unpack_codes(packed: np.ndarray, M: int, nbits: int) -> np.ndarray:
-    N = packed.shape[0]
-    bits = np.unpackbits(packed, axis=1, bitorder="big")
-    codes = np.zeros((N, M), dtype=np.int64)
-    for m in range(M):
-        chunk = bits[:, m * nbits : (m + 1) * nbits]
-        val = np.zeros(N, dtype=np.int64)
-        for b in range(nbits):
-            val = (val << 1) | chunk[:, b].astype(np.int64)
-        codes[:, m] = val
-    return codes
+    import faiss
+
+    return np.asarray(faiss.unpack_bitstrings(packed, M, nbits), dtype=np.int64)
 
 
 def train_rq(args, emb):
