@@ -629,20 +629,17 @@ def make_tasks(args: argparse.Namespace, shuffled_dirs: dict[int, Path]) -> list
                 )
             )
 
-    # Gate-1 takes priority as soon as its table dependency is ready.  Before
-    # that happens the loop naturally skips it and uses the corrected external
-    # controls to fill free cards.
+    # Benchmark-first paper protocol: completed matched checkpoints are sent
+    # directly to public LM evaluation.  Bespoke token slices and masking are
+    # intentionally not scheduled here; they become conditional follow-ups
+    # only if the public benchmark gate is positive.
     return [
         build,
+        *standard_evaluations,
         *gate1,
         *manifests,
         *evaluation_manifests,
         manifest_audit,
-        *slice_evaluations,
-        slice_comparison,
-        *intervention_evaluations,
-        intervention_comparison,
-        *standard_evaluations,
         *fillers,
     ]
 

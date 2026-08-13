@@ -1007,7 +1007,7 @@ def render(snapshot: dict[str, Any]) -> str:
             f"<td>{fmt(metrics.get('causal_target_token_presentations'), 0)}</td></tr>"
         )
     replication_rows = []
-    for name in GATE1:
+    for name in STANDARD_METHODS:
         cells = []
         for seed in GATE1_SEEDS:
             payload = snapshot["gate1_all"].get(f"{name}_seed{seed}", {})
