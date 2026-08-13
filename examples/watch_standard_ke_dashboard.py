@@ -8,12 +8,11 @@ from datetime import datetime
 from pathlib import Path
 
 RUNS = [
-    ("CounterFact", "Arithmetic-fixed", "logs/standard_cf_arithmetic_seed42.log", "invalid: old editable package"),
-    ("CounterFact", "LoRA", "logs/standard_cf_lora_seed42.log", "invalid: old editable package"),
+    ("CounterFact", "Arithmetic-fixed", "logs/standard_cf_arithmetic_seed42.log", "running · source path verified"),
+    ("CounterFact", "LoRA", "logs/standard_cf_lora_seed42.log", "running · source path verified"),
     ("ZsRE", "Arithmetic-fixed", "logs/standard_zsre_arithmetic_seed42_v2.log", "running"),
     ("CounterFact", "Semantic-RQ", "logs/standard_cf_rq_seed42.log", "queued after RQ table"),
     ("ZsRE", "Semantic-RQ", "logs/standard_zsre_rq_seed42.log", "queued after RQ table"),
-    ("CounterFact", "LoRA", "logs/standard_cf_lora_seed42_v2.log", "queued"),
     ("ZsRE", "LoRA", "logs/standard_zsre_lora_seed42.log", "queued"),
 ]
 
