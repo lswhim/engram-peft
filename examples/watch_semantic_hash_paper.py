@@ -63,6 +63,19 @@ def log_progress(path: Path) -> dict[str, Any]:
         progress["loss"] = float(losses[-1].group(1))
     if eval_losses:
         progress["eval_loss"] = float(eval_losses[-1].group(1))
+    gate_b = list(
+        re.finditer(r"step=(\d+)/(\d+)\s+loss=([0-9.eE+-]+)", content)
+    )
+    if gate_b:
+        match = gate_b[-1]
+        step = int(match.group(1))
+        total = int(match.group(2))
+        progress.update(
+            percent=round(100 * step / total),
+            step=step,
+            total_steps=total,
+            loss=float(match.group(3)),
+        )
     return progress
 
 
