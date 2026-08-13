@@ -178,11 +178,17 @@ def train_rq(args, emb):
     d = emb.shape[1]
     nbits = int(np.log2(args.codebook_size))
     assert (1 << nbits) == args.codebook_size, "codebook_size must be power of 2"
-    index = faiss.IndexResidualQuantizer(d, args.num_levels, nbits)
+    rq = faiss.ResidualQuantizer(d, args.num_levels, nbits)
     x = np.ascontiguousarray(emb.astype(np.float32))
-    index.train(x)
-    packed = index.sa_encode(x)
+    rq.train(x)
+    packed = rq.compute_codes(x)
     codes = unpack_codes(packed, args.num_levels, nbits).astype(np.uint16)
+    # FAISS serializes Index objects, not bare ResidualQuantizer instances. Attach the
+    # already-trained exact RQ object to a codec-only index; do not retrain through the
+    # IndexResidualQuantizer wrapper (FAISS 1.13 may enable an incompatible PCA path).
+    index = faiss.IndexResidualQuantizer(d, args.num_levels, nbits)
+    index.rq = rq
+    index.is_trained = True
     return codes, index
 
 
