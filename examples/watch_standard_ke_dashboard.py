@@ -30,13 +30,24 @@ def read(path: Path) -> str:
     try: return path.read_bytes()[-240_000:].decode(errors="ignore")
     except OSError: return ""
 
-def progress(path: Path) -> tuple[str, str]:
+def progress(path: Path, eval_path: Path | None = None, result_path: Path | None = None) -> tuple[str, str]:
     text = read(path)
     steps = re.findall(r"(\d+)/(205|345|3000)", text)
     losses = re.findall(r"['\"]loss['\"]:\s*([0-9.eE+-]+)", text)
     if "Traceback (most recent call last)" in text: return "failed", losses[-1] if losses else "—"
+    if result_path is not None:
+        try: result=json.loads(result_path.read_text())
+        except Exception: result={}
+        if result.get('status') == 'complete' and result.get('complete_official_split'):
+            return "official eval complete", losses[-1] if losses else "—"
+    eval_text=read(eval_path) if eval_path is not None else ""
+    eval_steps=re.findall(r"\[(\d+)/(1301|2191)\]",eval_text)
+    if "Traceback (most recent call last)" in eval_text:
+        return "eval failed", losses[-1] if losses else "—"
+    if eval_steps:
+        return "eval " + "/".join(eval_steps[-1]), losses[-1] if losses else "—"
     if "Summary Table" in text and steps:
-        return f"{steps[-1][1]}/{steps[-1][1]} · complete", losses[-1] if losses else "—"
+        return f"train {steps[-1][1]}/{steps[-1][1]} · eval queued", losses[-1] if losses else "—"
     return ("/".join(steps[-1]) if steps else "—", losses[-1] if losses else "—")
 
 def processes() -> list[tuple[str, str, str]]:
@@ -137,7 +148,14 @@ def completion_counts(root: Path) -> tuple[int, int]:
     return complete,len(expected)
 
 def render(root: Path) -> str:
-    run_rows=''.join(f'<tr><th>{d}</th><td>{m}</td><td>{s}</td><td>{progress(Path(l))[0]}</td><td>{progress(Path(l))[1]}</td><td><code>{l}</code></td></tr>' for d,m,s,l in RUNS)
+    run_rows=''
+    for d,m,s,l in RUNS:
+        dataset='counterfact' if d == 'CounterFact' else 'zsre'
+        slug=next(key for key,name in METHOD_LABELS.items() if name == m)
+        eval_log=Path(f'logs/formal_v3_eval_{"cf" if dataset=="counterfact" else "zsre"}_{slug}_seed{s}.log')
+        result=root/f'{dataset}_{slug}_seed{s}.json'
+        state,loss=progress(Path(l),eval_log,result)
+        run_rows+=f'<tr><th>{d}</th><td>{m}</td><td>{s}</td><td>{state}</td><td>{loss}</td><td><code>{l}</code><br><code>{eval_log}</code></td></tr>'
     proc_rows=''.join(f'<tr><th>{p}</th><td>{g}</td><td class="cmd">{html.escape(c)}</td></tr>' for p,g,c in processes())
     build=read(Path('logs/build_rq_M8K1024_300k.log'))
     stage='complete' if 'meta.json' in build or '[done]' in build.lower() else ('RQ fitting / writing' if '[rq]' in build else 'embedding')
