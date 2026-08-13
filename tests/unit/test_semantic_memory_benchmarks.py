@@ -1,6 +1,7 @@
 import json
 
 from examples.semantic_memory_benchmarks import (
+    cap_queries,
     load_pararel,
     load_ripple,
     load_wikibigedit,
@@ -47,3 +48,11 @@ def test_wikibigedit_is_chronological_and_defines_curve_points(tmp_path):
     assert [case.metadata["increment"] for case in cases] == ["202401_202402","202402_202403"]
     assert stream_checkpoints(50_000,(1_000,5_000,10_000,50_000)) == (1_000,5_000,10_000,50_000)
     assert stream_checkpoints(7_000,(1_000,5_000,10_000)) == (1_000,5_000,7_000)
+
+
+def test_query_cap_preserves_cases_and_write_targets(tmp_path):
+    folder=tmp_path/"x"; folder.mkdir(); path=folder/"qa.json"
+    path.write_text(json.dumps([{"src":"q","alt":"a","rephrase":"r","loc":"l","loc_ans":"la","mhop":"m","mhop_ans":"ma"}]))
+    original=load_wikibigedit([path]); capped=cap_queries(original,2)
+    assert capped[0].prompt==original[0].prompt and capped[0].target==original[0].target
+    assert len(capped[0].queries)==2

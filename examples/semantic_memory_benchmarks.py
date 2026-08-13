@@ -215,6 +215,16 @@ def write_manifest(cases: Iterable[EditCase], output: Path) -> None:
     temporary.replace(output)
 
 
+def cap_queries(cases: Iterable[EditCase], per_case: int) -> list[EditCase]:
+    """Deterministically cap evaluation queries without changing writes."""
+    if per_case <= 0:
+        return list(cases)
+    return [
+        EditCase(case.case_id, case.prompt, case.target, case.queries[:per_case], case.metadata)
+        for case in cases
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="benchmark", required=True)
@@ -224,11 +234,14 @@ def main() -> None:
     ripple.add_argument("--files", type=Path, nargs="+", required=True)
     wiki = sub.add_parser("wikibigedit")
     wiki.add_argument("--files", type=Path, nargs="+", required=True)
-    for command in (para, ripple, wiki): command.add_argument("--output", type=Path, required=True)
+    for command in (para, ripple, wiki):
+        command.add_argument("--output", type=Path, required=True)
+        command.add_argument("--max-queries-per-case", type=int, default=0)
     args = parser.parse_args()
     if args.benchmark == "pararel": cases = load_pararel(args.patterns, args.facts)
     elif args.benchmark == "ripple": cases = load_ripple(args.files)
     else: cases = load_wikibigedit(args.files)
+    cases = cap_queries(cases, args.max_queries_per_case)
     write_manifest(cases, args.output)
     print(json.dumps({"benchmark": args.benchmark, "output": str(args.output), **manifest_summary(cases)}, indent=2))
 
