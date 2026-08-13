@@ -1520,16 +1520,16 @@ def render(snapshot: dict[str, Any]) -> str:
             gate_b_verdict = "Seed42 暂不支持 OOD 泛化"
             comparison = (
                 f"Semantic vs Base：QQP Acc {semantic_gate_b['qqp']:.2%} vs "
-                f"{base_gate_b['qqp']:.2%}（{qqp_delta:+.2%}），PAWS-Wiki Acc "
+                f"{base_gate_b['qqp']:.2%}（{100 * qqp_delta:+.2f} pp），PAWS-Wiki Acc "
                 f"{semantic_gate_b['wiki']:.2%} vs {base_gate_b['wiki']:.2%}"
-                f"（{wiki_delta:+.2%}）。"
+                f"（{100 * wiki_delta:+.2f} pp）。"
             )
             if "arithmetic_matched" in gate_b_seed42:
                 arithmetic_gate_b = gate_b_seed42["arithmetic_matched"]
                 comparison += (
                     f" Semantic vs Arithmetic：QQP "
-                    f"{semantic_gate_b['qqp'] - arithmetic_gate_b['qqp']:+.2%}，"
-                    f"PAWS-Wiki {semantic_gate_b['wiki'] - arithmetic_gate_b['wiki']:+.2%}。"
+                    f"{100 * (semantic_gate_b['qqp'] - arithmetic_gate_b['qqp']):+.2f} pp，"
+                    f"PAWS-Wiki {100 * (semantic_gate_b['wiki'] - arithmetic_gate_b['wiki']):+.2f} pp。"
                 )
             gate_b_detail = (
                 comparison
