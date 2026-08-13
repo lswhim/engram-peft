@@ -42,6 +42,10 @@ def normalized_aliases(values: list[str]) -> set[str]:
     return {" ".join(value.lower().strip().split()) for value in values if value.strip()}
 
 
+def first_nonempty(values: list[str]) -> str | None:
+    return next((str(value).strip() for value in values if str(value).strip()),None)
+
+
 @torch.inference_mode()
 def target_token_accuracy(tokenizer: Any, model: Any, pairs: list[tuple[str, str]], batch_size: int) -> list[float]:
     encoded=[]
@@ -113,17 +117,24 @@ def main() -> None:
     if args.engram_weights:
         from engram_peft import EngramModel
         model=EngramModel.from_pretrained(base,args.engram_weights,tokenizer=tokenizer).to("cuda")
-    model.eval(); query_specs=[]; condition_specs=[]
+    model.eval(); query_specs=[]; condition_specs=[]; skipped_unscorable=0; skipped_conditions=0
     for case in cases:
         for query in case["queries"]:
-            query_specs.append((case,query))
-            for prompt,answers in zip(query.get("condition_prompts",[]),query.get("condition_answers",[]),strict=True): condition_specs.append((len(query_specs)-1,prompt,answers))
-    query_scores=target_token_accuracy(tokenizer,model,[(q["prompt"],q["answers"][0]) for _,q in query_specs],args.batch_size)
-    condition_scores=target_token_accuracy(tokenizer,model,[(prompt,answers[0]) for _,prompt,answers in condition_specs],args.batch_size) if condition_specs else []
+            answer=first_nonempty(query.get("answers",[]))
+            if answer is None:
+                skipped_unscorable+=1
+                continue
+            query_specs.append((case,query,answer))
+            for prompt,answers in zip(query.get("condition_prompts",[]),query.get("condition_answers",[]),strict=True):
+                condition_answer=first_nonempty(answers)
+                if condition_answer is None: skipped_conditions+=1
+                else: condition_specs.append((len(query_specs)-1,prompt,condition_answer))
+    query_scores=target_token_accuracy(tokenizer,model,[(q["prompt"],answer) for _,q,answer in query_specs],args.batch_size)
+    condition_scores=target_token_accuracy(tokenizer,model,[(prompt,answer) for _,prompt,answer in condition_specs],args.batch_size) if condition_specs else []
     condition_by_query: dict[int,list[bool]]=defaultdict(list)
     for (index,_,_),score in zip(condition_specs,condition_scores,strict=True): condition_by_query[index].append(score==1.0)
     rows=[]
-    for index,((case,query),score) in enumerate(zip(query_specs,query_scores,strict=True)):
+    for index,((case,query,_),score) in enumerate(zip(query_specs,query_scores,strict=True)):
         checks=condition_by_query[index]
         eligible=(all(checks) if query.get("condition","OR")=="AND" else any(checks)) if checks else True
         rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity"),"cohort_origin":case.get("metadata",{}).get("cohort_origin"),"evaluated_at":case.get("metadata",{}).get("evaluated_at")})
@@ -148,7 +159,7 @@ def main() -> None:
                 temporary=args.geometry_cache.with_suffix(".tmp")
                 temporary.write_text(json.dumps(cached),encoding="utf-8"); os.replace(temporary,args.geometry_cache)
         quartile_bins([rows[i] for i in geometry_indices])
-    payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","geometry_bins":"within-run quartiles"}}
+    payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"skipped_unscorable_queries":skipped_unscorable,"skipped_unscorable_conditions":skipped_conditions,"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","geometry_bins":"within-run quartiles"}}
     args.output.parent.mkdir(parents=True,exist_ok=True); samples=args.output.with_suffix(".jsonl")
     with samples.open("w",encoding="utf-8") as handle:
         for row in rows: handle.write(json.dumps(row,ensure_ascii=False)+"\n")

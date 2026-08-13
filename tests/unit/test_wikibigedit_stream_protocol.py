@@ -4,6 +4,7 @@ import sys
 
 from examples.wikibigedit_stream_protocol import build_protocol, cohort_indices
 from examples.build_wikibigedit_eval_manifest import build_eval_cases
+from examples.evaluate_semantic_memory import first_nonempty
 
 
 def test_cohorts_are_deterministic_bounded_and_spread():
@@ -37,3 +38,8 @@ def test_script_entrypoint_runs_from_outside_repo(tmp_path):
     script=__import__("examples.wikibigedit_stream_protocol",fromlist=["x"]).__file__
     subprocess.run([sys.executable,script,"--manifest",str(manifest),"--output",str(output),"--points","2","4"],cwd=tmp_path,check=True,capture_output=True,text=True)
     assert json.loads(output.read_text())["points"]==[2,4]
+
+
+def test_first_nonempty_rejects_missing_official_targets():
+    assert first_nonempty([]) is None
+    assert first_nonempty(["", " answer "])=="answer"
