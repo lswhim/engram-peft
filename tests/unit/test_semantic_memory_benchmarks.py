@@ -19,6 +19,8 @@ def test_pararel_uses_counterfactual_target_and_holds_out_templates(tmp_path):
     assert "[Y]" not in cases[0].prompt
     assert cases[0].queries[0].prompt != cases[0].prompt
     assert cases[0].queries[0].role == "should_propagate"
+    assert "Alice" not in cases[0].queries[0].geometry_text
+    assert "Alice" not in cases[0].metadata["canonical_geometry_text"]
 
 
 def test_ripple_preserves_condition_gating_and_boundary_roles(tmp_path):

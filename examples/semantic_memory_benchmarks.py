@@ -28,6 +28,7 @@ class Query:
     condition_answers: tuple[tuple[str, ...], ...] = ()
     condition: str = "OR"
     lexical_similarity: float | None = None
+    geometry_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ def load_pararel(pattern_dir: Path, facts_dir: Path, seed: int = 42) -> list[Edi
                     role="should_propagate",
                     axis="unseen_template",
                     lexical_similarity=lexical_similarity(canonical, _fill_pattern(pattern, subject)),
+                    geometry_text=_fill_pattern(pattern, "[ENTITY]"),
                 )
                 for pattern in patterns[1:]
             )
@@ -100,7 +102,7 @@ def load_pararel(pattern_dir: Path, facts_dir: Path, seed: int = 42) -> list[Edi
                 prompt=canonical,
                 target=target,
                 queries=queries,
-                metadata={"relation": relation, "original_target": str(fact["obj_label"]), "protocol": "within_relation_derangement"},
+                metadata={"relation": relation, "original_target": str(fact["obj_label"]), "canonical_geometry_text": _fill_pattern(patterns[0], "[ENTITY]"), "protocol": "within_relation_derangement"},
             ))
     return cases
 

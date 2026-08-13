@@ -120,7 +120,10 @@ def main() -> None:
         rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity")})
     geometry_indices=[i for i,row in enumerate(rows) if row["axis"]=="unseen_template"]
     if geometry_indices:
-        pairs=[(query_specs[i][0]["prompt"],query_specs[i][1]["prompt"]) for i in geometry_indices]
+        pairs=[(
+            query_specs[i][0].get("metadata",{}).get("canonical_geometry_text",query_specs[i][0]["prompt"]),
+            query_specs[i][1].get("geometry_text") or query_specs[i][1]["prompt"],
+        ) for i in geometry_indices]
         for i,cosine in zip(geometry_indices,semantic_cosines(pairs,args.embedder,args.embed_batch_size),strict=True): rows[i]["semantic_similarity"]=cosine
         quartile_bins([rows[i] for i in geometry_indices])
     payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","geometry_bins":"within-run quartiles"}}
