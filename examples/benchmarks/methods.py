@@ -9,6 +9,7 @@ from peft import LoraConfig, TaskType, get_peft_model
 from torch.optim.adamw import AdamW
 from transformers import (
     DataCollatorForLanguageModeling,
+    default_data_collator,
     EarlyStoppingCallback,
     PreTrainedModel,
     PreTrainedTokenizerBase,
@@ -151,7 +152,7 @@ def train_lora(
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
+        data_collator=default_data_collator,
         callbacks=callbacks,
     )
 

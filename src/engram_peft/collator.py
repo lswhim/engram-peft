@@ -91,10 +91,17 @@ class EngramDataCollator(DataCollatorForLanguageModeling):
             Dict[str, Any]: A dictionary containing input_ids, labels,
                 and engram_hash_indices.
         """
-        # Step 1: Call parent to get basic LM batch (handles padding, labels, etc.)
+        # DataCollatorForLanguageModeling always regenerates labels from input_ids
+        # when mlm=False. Preserve dataset-provided masks (e.g. prompt=-100 for
+        # canonical knowledge writing) across that parent call.
+        supplied_labels = [feature.get("labels") for feature in features]
         batch = cast(
             "dict[str, Any]", super().__call__(features, return_tensors=return_tensors)
         )
+        if all(labels is not None for labels in supplied_labels):
+            batch["labels"] = torch.as_tensor(
+                supplied_labels, dtype=torch.long, device=batch["input_ids"].device
+            )
         input_ids = cast("torch.Tensor", batch["input_ids"])
 
         # Step 1.5: Explicitly mask padding in labels (critical for training stability)
