@@ -242,7 +242,12 @@ class FixedNgramHashMapping:
                 per_order.append(values * 2 + 1)
             self.all_head_multipliers[layer_id] = per_order
 
-    def hash(self, input_ids: torch.Tensor | np.ndarray) -> dict[int, np.ndarray]:
+    def hash(
+        self,
+        input_ids: torch.Tensor | np.ndarray,
+        original_ids: np.ndarray | None = None,
+    ) -> dict[int, np.ndarray]:
+        del original_ids
         if isinstance(input_ids, torch.Tensor):
             array = input_ids.detach().cpu().numpy()
         else:
