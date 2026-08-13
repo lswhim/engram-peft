@@ -1393,14 +1393,27 @@ def render(snapshot: dict[str, Any]) -> str:
         base_wikitext = standard_metric(
             base_payload, "wikitext", ("word_perplexity,none", "word_perplexity")
         )
-        completed_base_tasks = 1 + int(base_wikitext is not None)
+        base_c4 = standard_metric(
+            base_payload,
+            "c4",
+            (
+                "word_perplexity,none",
+                "word_perplexity",
+                "perplexity,none",
+                "perplexity",
+            ),
+        )
+        completed_base_tasks = (
+            1 + int(base_wikitext is not None) + int(base_c4 is not None)
+        )
         base_status_badge = (
             f'<span class="pill done">{completed_base_tasks}/3 已完成</span>'
         )
         base_status_text = (
             (f"WikiText-103 PPL {base_wikitext:.3f}；" if base_wikitext is not None else "")
             + f"LAMBADA Accuracy {base_lambada_acc:.2%}，PPL {base_lambada_ppl:.3f}；"
-            "C4 正在运行。结果均自动进入 Gate A 主表。"
+            + (f"C4 validation PPL {base_c4:.3f}。" if base_c4 is not None else "C4 正在运行。")
+            + "结果均自动进入 Gate A 主表。"
         )
     else:
         base_status_badge = '<span class="pill run">LAMBADA 运行中</span>'
