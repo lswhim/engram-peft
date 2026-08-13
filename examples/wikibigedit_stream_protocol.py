@@ -23,16 +23,22 @@ def read_cases(path: Path, limit: int) -> list[dict[str, Any]]:
     return cases
 
 
-def cohort_indices(point: int, size: int, seed: int) -> list[int]:
-    """Deterministic evenly spread cohort, stable across reruns."""
-    if size <= 0 or point <= 0: return []
-    count=min(size,point)
-    offset=seed % max(1,point//count)
-    return sorted({min(point-1,offset+(i*point)//count) for i in range(count)})
+def cohort_indices(point: int, size: int, seed: int, start: int = 0) -> list[int]:
+    """Deterministic evenly spread sample from the half-open interval [start, point)."""
+    width=max(0,point-start)
+    if size <= 0 or width <= 0: return []
+    count=min(size,width)
+    stride=max(1,width//count)
+    offset=seed % stride
+    return [min(point-1,start+offset+(i*width)//count) for i in range(count)]
 
 
 def build_protocol(cases: list[dict[str, Any]], points: tuple[int,...], cohort_size: int, seed: int) -> dict[str,Any]:
-    cohorts={str(point):cohort_indices(point,cohort_size,seed+point) for point in points}
+    cohorts={}
+    start=0
+    for point in points:
+        cohorts[str(point)]=cohort_indices(point,cohort_size,seed+point,start)
+        start=point
     return {
         "protocol":"single_adapter_chronological_one_pass",
         "points":list(points),

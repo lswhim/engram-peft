@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 from examples.wikibigedit_stream_protocol import build_protocol, cohort_indices
+from examples.build_wikibigedit_eval_manifest import build_eval_cases
 
 
 def test_cohorts_are_deterministic_bounded_and_spread():
@@ -17,6 +18,17 @@ def test_retention_matrix_only_uses_past_cohorts():
     protocol=build_protocol([{}]*10_000,(1000,5000,10000),50,42)
     assert set(protocol["retention"]["1000"])=={"1000"}
     assert set(protocol["retention"]["10000"])=={"1000","5000","10000"}
+    assert max(protocol["cohorts"]["1000"]) < min(protocol["cohorts"]["5000"])
+    assert max(protocol["cohorts"]["5000"]) < min(protocol["cohorts"]["10000"])
+
+
+def test_eval_manifest_adds_canonical_and_cohort_metadata():
+    cases=[{"case_id":str(i),"prompt":f"p{i}","target":f"t{i}","queries":[{"prompt":f"g{i}","answers":[f"t{i}"],"axis":"generalization","role":"should_propagate"}],"metadata":{}} for i in range(10)]
+    protocol=build_protocol(cases,(5,10),2,42)
+    output=build_eval_cases(cases,protocol,10)
+    assert len(output)==4
+    assert {case["metadata"]["cohort_origin"] for case in output}=={5,10}
+    assert all(case["queries"][0]["axis"]=="efficacy" for case in output)
 
 
 def test_script_entrypoint_runs_from_outside_repo(tmp_path):

@@ -99,6 +99,8 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not row["eligible"]: continue
         groups[f"axis/{row['axis']}"] .append(row["accuracy"])
         groups[f"role/{row['role']}"] .append(row["accuracy"])
+        if row.get("cohort_origin") is not None:
+            groups[f"cohort/{row['cohort_origin']}/{row['axis']}"] .append(row["accuracy"])
         if row.get("semantic_bin"): groups[f"geometry/{row['semantic_bin']}_{row['lexical_bin']}"] .append(row["accuracy"])
     return {key:{"mean":sum(values)/len(values),"n":len(values)} for key,values in sorted(groups.items())}
 
@@ -124,7 +126,7 @@ def main() -> None:
     for index,((case,query),score) in enumerate(zip(query_specs,query_scores,strict=True)):
         checks=condition_by_query[index]
         eligible=(all(checks) if query.get("condition","OR")=="AND" else any(checks)) if checks else True
-        rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity")})
+        rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity"),"cohort_origin":case.get("metadata",{}).get("cohort_origin"),"evaluated_at":case.get("metadata",{}).get("evaluated_at")})
     geometry_indices=[i for i,row in enumerate(rows) if row["axis"]=="unseen_template"]
     if geometry_indices:
         cached: dict[str, float] = {}
