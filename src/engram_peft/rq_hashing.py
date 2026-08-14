@@ -57,6 +57,7 @@ class RQNgramMapping:
     _tokenizer: Any = field(init=False, default=None, repr=False)
     _embedder: Any = field(init=False, default=None, repr=False)
     _rq_indices: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
+    _projectors: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
     _meta: dict[str, Any] = field(init=False, repr=False)
     _trace_enabled: bool = field(init=False, default=False, repr=False)
     _traced_rows: set[tuple[int, int, int]] = field(
@@ -158,6 +159,23 @@ class RQNgramMapping:
             n: faiss.read_index(os.path.join(self.table_dir, f"rq_{n}.faiss"))
             for n in self.ngram_sizes
         }
+        if self._meta.get("projection") == "autoencoder":
+            for n in self.ngram_sizes:
+                payload = torch.load(
+                    os.path.join(self.table_dir, f"projector_{n}.pt"),
+                    map_location=self.embed_device,
+                    weights_only=True,
+                )
+                projector = torch.nn.Sequential(
+                    torch.nn.Linear(payload["input_dim"], payload["hidden_dim"]),
+                    torch.nn.GELU(),
+                    torch.nn.Linear(payload["hidden_dim"], payload["projection_dim"]),
+                ).to(self.embed_device)
+                projector.load_state_dict(payload["state_dict"])
+                projector.eval()
+                for parameter in projector.parameters():
+                    parameter.requires_grad_(False)
+                self._projectors[n] = projector
 
     def _encode_missing(
         self, n: int, keys: np.ndarray, original_windows: np.ndarray
@@ -189,6 +207,13 @@ class RQNgramMapping:
                 vectors = torch.nn.functional.normalize(vectors, dim=-1)
                 encoded.append(vectors.float().cpu().numpy())
         vectors_np = np.ascontiguousarray(np.concatenate(encoded).astype(np.float32))
+        if n in self._projectors:
+            with torch.inference_mode():
+                projected = self._projectors[n](
+                    torch.from_numpy(vectors_np).to(self.embed_device)
+                )
+                projected = torch.nn.functional.normalize(projected, dim=-1)
+            vectors_np = np.ascontiguousarray(projected.float().cpu().numpy())
         packed = self._rq_indices[n].sa_encode(vectors_np)
         import faiss
 
