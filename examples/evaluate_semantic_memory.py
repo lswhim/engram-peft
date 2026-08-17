@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--engram-weights")
+    parser.add_argument("--lora-weights")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--embedder", default="Qwen/Qwen3-Embedding-0.6B")
     parser.add_argument("--batch-size", type=int, default=16)
@@ -162,6 +163,8 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> None:
     args=parse_args(); cases=read_manifest(args.manifest,args.limit)
+    if args.engram_weights and args.lora_weights:
+        raise ValueError("choose only one of --engram-weights and --lora-weights")
     tokenizer=AutoTokenizer.from_pretrained(args.model,trust_remote_code=True)
     base=AutoModelForCausalLM.from_pretrained(args.model,dtype=torch.bfloat16,low_cpu_mem_usage=True).to("cuda")
     base.eval(); query_specs=[]; condition_specs=[]; skipped_unscorable=0; skipped_conditions=0
@@ -193,6 +196,9 @@ def main() -> None:
     if args.engram_weights:
         from engram_peft import EngramModel
         model=EngramModel.from_pretrained(base,args.engram_weights,tokenizer=tokenizer).to("cuda")
+    elif args.lora_weights:
+        from peft import PeftModel
+        model=PeftModel.from_pretrained(base,args.lora_weights).to("cuda")
     model.eval()
     query_scores,query_predictions=target_token_predictions(
         tokenizer,model,pairs,args.batch_size,args.prompt_format

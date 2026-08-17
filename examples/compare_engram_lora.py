@@ -83,6 +83,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--resume_lora_weights",
+        type=str,
+        help="Continue a trainable LoRA adapter from a prior official timestep.",
+    )
+    parser.add_argument(
+        "--lora_save_dir",
+        type=str,
+        help="Explicit final LoRA checkpoint directory for auditable paper runs.",
+    )
+    parser.add_argument(
         "--model_name",
         type=str,
         default="Qwen/Qwen3-1.7B",

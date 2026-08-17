@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 from torch.utils.data import SequentialSampler
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from torch.optim.adamw import AdamW
 from transformers import (
     DataCollatorForLanguageModeling,
@@ -120,7 +120,14 @@ def train_lora(
     if not isinstance(base_model, PreTrainedModel):
         # Fallback to nominal check for get_peft_model
         raise TypeError("base_model must be a PreTrainedModel for PEFT")
-    model = get_peft_model(base_model, peft_config)
+    resume_path = getattr(args, "resume_lora_weights", None)
+    if resume_path:
+        model = PeftModel.from_pretrained(
+            base_model, resume_path, is_trainable=True
+        )
+        print(f"[lora] resumed trainable adapter from {resume_path}")
+    else:
+        model = get_peft_model(base_model, peft_config)
     model.print_trainable_parameters()
 
     warmup_steps = int(args.max_steps * 0.03)
@@ -176,7 +183,12 @@ def train_lora(
         if getattr(args, "disable_early_stopping", False)
         else [EarlyStoppingCallback(early_stopping_patience=5)]
     )
-    trainer = EngramTrainer(
+    trainer_class = (
+        ChronologicalEngramTrainer
+        if getattr(args, "chronological", False)
+        else EngramTrainer
+    )
+    trainer = trainer_class(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -188,7 +200,9 @@ def train_lora(
     train_result = trainer.train()
     metrics = extract_trainer_metrics(trainer, train_result)
 
-    save_dir = f"outputs/benchmarks/ckpt_{run_tag}"
+    save_dir = getattr(args, "lora_save_dir", None) or (
+        f"outputs/benchmarks/ckpt_{run_tag}"
+    )
     model.save_pretrained(save_dir)
     print(f"[lora] saved to {save_dir}")
     metrics["save_dir"] = save_dir

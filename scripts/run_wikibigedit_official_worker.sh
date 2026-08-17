@@ -34,6 +34,9 @@ mkdir -p run_logs "$OUT_ROOT/$MODE/seed_${SEED}"
 
 COMMON="n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[11,21]"
 case "$MODE" in
+  lora)
+    METHOD="lora"
+    ;;
   semantic_specificity)
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
@@ -58,7 +61,7 @@ case "$MODE" in
   *) echo "unknown mode: $MODE" >&2; exit 2 ;;
 esac
 
-if [[ "$MODE" != arithmetic && ! -f "$TABLE/meta.json" ]]; then
+if [[ "$MODE" == semantic_* || "$MODE" == shuffled_* ]] && [[ ! -f "$TABLE/meta.json" ]]; then
   echo "missing official train-only RQ table: $TABLE" >&2
   exit 3
 fi
@@ -85,7 +88,17 @@ for index in "${!TIMESTEPS[@]}"; do
   fi
   resume_args=()
   if [[ -n "$previous" ]]; then
-    resume_args=(--resume_engram_weights "$previous")
+    if [[ "$MODE" == lora ]]; then
+      resume_args=(--resume_lora_weights "$previous")
+    else
+      resume_args=(--resume_engram_weights "$previous")
+    fi
+  fi
+  save_args=(--engram_save_dir "$checkpoint")
+  expected_adapter="$checkpoint/engram_adapters.safetensors"
+  if [[ "$MODE" == lora ]]; then
+    save_args=(--lora_save_dir "$checkpoint")
+    expected_adapter="$checkpoint/adapter_model.safetensors"
   fi
   "$PY" -u examples/compare_engram_lora.py \
     --model_name "$BASE" --dataset semantic_manifest \
@@ -93,9 +106,9 @@ for index in "${!TIMESTEPS[@]}"; do
     --max_steps "$steps" --batch_size 4 --grad_accum 5 --max_length 128 \
     --prompt_format qa --num_workers 4 --disable_early_stopping --seed "$SEED" \
     --methods "$METHOD" --run_suffix "$suffix" --skip_plot --skip_inference \
-    --engram_save_dir "$checkpoint" \
+    "${save_args[@]}" \
     "${resume_args[@]}"
-  if [[ ! -f "$checkpoint/engram_adapters.safetensors" ]]; then
+  if [[ ! -f "$expected_adapter" ]]; then
     echo "checkpoint not found after timestep $index" >&2
     exit 6
   fi
@@ -107,9 +120,13 @@ done
 cumulative=0
 for index in "${!TIMESTEPS[@]}"; do
   cumulative=$(( cumulative + EXPECTED_COUNTS[index] ))
+  eval_adapter_args=(--engram-weights "${checkpoints[$index]}")
+  if [[ "$MODE" == lora ]]; then
+    eval_adapter_args=(--lora-weights "${checkpoints[$index]}")
+  fi
   "$PY" -u examples/evaluate_semantic_memory.py \
     --model "$BASE" --manifest "$FULL_MANIFEST" --limit "$cumulative" \
-    --engram-weights "${checkpoints[$index]}" \
+    "${eval_adapter_args[@]}" \
     --output "$OUT_ROOT/$MODE/seed_${SEED}/t${index}_at_${cumulative}.json" \
     --prompt-format qa --locality-mode pre_post_preservation \
     --evaluation-cohort "${TIMESTEPS[$index]}" \
