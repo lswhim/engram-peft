@@ -1,6 +1,6 @@
-# CREDIT-Engram：具有反事实信用分配的层级语义条件记忆
+# CREDIT-Engram：具有反事实信用分配的语义条件记忆
 
-> 版本：v1（2026-08-18）  
+> 版本：v2（2026-08-18，WikiBigEdit-50K 地址审计后修订）
 > 目标：ICLR 2027 级完整研究，而非 smoke test  
 > 资源：4 × NVIDIA A100 40GB  
 > 当前判断：单独把 Arithmetic Hash 替换为 Semantic RQ 不足以构成稳定贡献；核心问题是语义共享发生后，Engram gate 无法判断这次共享是帮助还是干扰。
@@ -24,29 +24,53 @@ Engram-Nine 的独立观察与此一致：单纯提高 lookup precision 并不�
 
 > Semantic RQ 提供了不同粒度的共享候选，但现有 Engram 把所有 RQ head 扁平拼接，并只通过最终语言模型损失间接训练 gate。模型既不知道 RQ level 的粒度，也没有直接信号判断一次 memory 注入对当前 token 是有益还是有害。
 
+### 1.1 WikiBigEdit-50K 地址审计：层级假设被否定
+
+审计覆盖与现有 WikiBigEdit@50K 主实验严格匹配的 50,000 个 chronological edits，包含 52,357 条
+propagation query、50,000 条 locality query，共 149,112 个唯一文本。所有 OOV n-gram 都使用冻结的
+Qwen3-Embedding-4B 与同一 M=8/K=16 RQ 在线编码；Semantic 与 runtime-shuffled 逐 query 配对。
+
+关键结果：
+
+| Order / terminal suffix | Semantic propagation | Semantic locality | Shuffled propagation | Shuffled locality |
+|---|---:|---:|---:|---:|
+| 2-gram mean prefix depth | 3.533 | 3.547 | 3.120 | 3.110 |
+| 3-gram mean prefix depth | 3.205 | 2.236 | 2.872 | 1.793 |
+
+- 2-gram 的 semantic prefix 完全不能区分 propagation 与 locality；
+- 3-gram 有任务区分，但 Semantic 相对 Shuffled 对 propagation 增加约 0.33 层，对 locality 增加约
+  0.44 层，false sharing 同样甚至更强；
+- `anywhere-in-prompt` overlap 被公共 n-gram 饱和，不可作为机制证据；
+- terminal bucket 的中间层 relation purity 多数低于 Shuffled，说明 FAISS RQ residual level 是重构层级，
+  不是可直接解释为“粗关系语义→细实体语义”的层级；
+- 完整 joint-code 相同率在 Semantic/Shuffled 中必然一致，因为 shuffled control 保留 joint-code identity。
+
+因此，v1 的 ordered-depth 方案正式否决。后续方法不得声称 RQ level 天然具有可用的语义抽象顺序。
+
 ## 2. 论文核心假设
 
 ### 2.1 一句话 motivation
 
 Semantic addressing determines **who may share a memory**, but a useful conditional memory must additionally learn **how much to share and whether the shared memory causally helps the current prediction**.
 
-### 2.2 可证伪假设
+### 2.2 修订后的可证伪假设
 
-1. RQ code prefix 对语义邻域存在统计上的由粗到细结构；
-2. 对 paraphrase、别名和相关事实，较浅层共享具有更高边际效用；
-3. 对冲突事实、多义表达和 locality query，更深层 residual 或关闭 memory 更有利；
-4. 用反事实 memory-on/off 或 depth-pair loss 构造的 utility label，可以改善 gate 与真实 memory utility 的对齐；
-5. 改善 credit assignment 后，Semantic-RQ 相对 RQ-Shuffled 的差距应扩大，而不是只共同优于 Arithmetic。
+1. Semantic RQ 的不同 heads 提供不同的共享候选，但不存在可靠的有序 depth；
+2. 当前 flatten gate 只能对所有 heads 混合后的 value 做统一调制，无法区分有益与有害 collision；
+3. 将读写分解到逐 head route，并保持相同投影参数量，可以控制结构化共享造成的 transfer/interference；
+4. 用等激活预算的反事实 route pair 产生 utility preference，可以改善 router 与真实 token loss 的对齐；
+5. 改善 credit assignment 后，Semantic-RQ 相对 RQ-Shuffled 的差距应扩大；否则 semantic ordering 不能列为核心贡献。
 
-若第 1 条不成立，RQ hierarchy 不能作为论文机制；若第 4/5 条不成立，方法主张失败，不能用单点 accuracy 掩盖。
+## 3. 方法：CREDIT-Engram
 
 ## 3. 方法：CREDIT-Engram
 
 暂定全称：**Counterfactual Residual-utility Estimation for Dynamic, Interference-aware Transfer**。
 
-方法由一个统一原则导出，而不是任意模块相加：使用 RQ 层级表达共享粒度，并用 memory 的因果边际效用为层级 gate 分配训练信用。
+方法由一个统一原则导出：semantic memory 的 collision 不是先验的好或坏，必须在读和写时按其对当前预测的
+反事实效用分配信用。RQ heads 被视为并行候选 route，而不是虚构成语义深度。
 
-### 3.1 层级语义地址
+### 3.1 多头语义地址
 
 对每个 suffix n-gram `g_t`：
 
@@ -56,7 +80,7 @@ Qwen3-Embedding(g_t) -> frozen RQ -> (c_1, ..., c_L)
 
 首次遇到 n-gram 时执行 embedding 和 RQ 编码，随后把 codes 与必要的量化统计写入 persistent cache。热路径仍为确定性查表。训练和推理使用同一冻结 encoder/codebook。
 
-### 3.2 保留 RQ level，而不是 flatten
+### 3.2 参数匹配的逐 head value 分解
 
 当前实现：
 
@@ -64,72 +88,81 @@ Qwen3-Embedding(g_t) -> frozen RQ -> (c_1, ..., c_L)
 [2/3-gram × L levels × d_head] -> flatten -> one ContextAwareGate
 ```
 
-新实现对每个 n-gram order 保留 level 轴：
+新实现保留 16 个 head（2/3-gram × 8 RQ heads）的轴：
 
 \[
-e_{t,l}=M_l[c_{t,l}], \qquad
-v_{t,l}=W^V_l e_{t,l}.
+e_{t,j}=M_j[c_{t,j}], \qquad
+v_{t,j}=W^V_j e_{t,j}.
 \]
 
-gate 输入包括当前 hidden state、level-specific memory value 和 level embedding：
+这里 `W^V_j` 不是新增的大矩阵，而是原始 `W^V` 按输入维度切出的 block：
 
 \[
-s_{t,l}=g(h_t,e_{t,l},r_l).
+W^V=[W^V_1|\cdots|W^V_H],\qquad
+W^V[e_1;\cdots;e_H]=\sum_jW^V_je_j.
 \]
 
-第一版不引入庞大网络，只使用低秩投影和标量 gate，保证新增激活计算可忽略。
+因此逐 head value decomposition 与 flatten baseline 严格参数匹配；变化只在于允许每个候选 route 独立获得
+read/write credit。
 
-### 3.3 有序的自适应读取深度
+### 3.3 Head-factorized read router 与 null route
 
-RQ 后级编码的是前级未解释的残差，因此读取不能把 level 当作无序 experts。定义 continuation probability：
+每个 head 根据 hidden state 与该 head 的 memory value 预测效用分数：
 
 \[
-p_{t,l}=\sigma(s_{t,l}), \qquad
-a_{t,l}=\prod_{j=1}^{l}p_{t,j}.
+r_{t,j}=g(h_t,e_{t,j},j).
 \]
 
-聚合 memory：
+在固定激活预算 `k` 下选择 top-k heads，并与显式 null route 比较：
 
 \[
-m_t=\sum_{l=1}^{L}a_{t,l}v_{t,l}.
+m_t=\sum_{j\in S_t}a_{t,j}v_{t,j},\qquad |S_t|=k,
 \]
 
-直觉：浅层足够时停止；只有上下文判断需要更具体的 residual correction 时才继续深入。另保留一个显式 no-memory route，使错误共享可以完全被拒绝。
+若 null route 分数最高，则本 token 不读取 memory。Semantic、Shuffled、Arithmetic 都使用同一 router 和相同
+top-k 预算，防止用更多激活 memory 换取效果。
 
-### 3.4 反事实 utility credit
+### 3.4 等计算量反事实 route-pair credit
 
-普通 LM loss 只评价实际执行的一条 memory route，无法告诉 gate 未选择的 route 是否更好。训练时为部分 batch 构造配对 route：
+普通 LM loss 只评价实际执行的一条 route。训练时对部分样本采样两个具有相同 head 数的 route：
 
 ```text
-route A: no-memory 或 prefix depth d-1
-route B: prefix depth d
+route A: S_A, |S_A|=k
+route B: S_B, |S_B|=k
 ```
 
-由目标 token 的 log-likelihood 差构造停止梯度的边际效用：
+两个 route 通过 batch 内复制在一次 batched 调用中执行。由监督 token NLL 得到停止梯度的 route preference：
 
 \[
-u_{t,d}=\operatorname{sg}\left[
-\log p(y_t\mid h_t,m_{\le d})-
-\log p(y_t\mid h_t,m_{<d})
-\right].
+\Delta u_t=\operatorname{sg}[\ell(y_t;S_B)-\ell(y_t;S_A)].
 \]
 
-gate 用 pairwise ranking / calibrated binary loss 预测 `u_{t,d}>0`：
+router 用 Bradley--Terry pairwise loss 预测哪条 route 更好：
 
 \[
-\mathcal L_{credit}=\operatorname{BCE}(p_{t,d},\mathbb 1[u_{t,d}>\epsilon]).
+\mathcal L_{credit}=-\log\sigma\left(
+-\operatorname{sign}(\Delta u_t)
+[R(S_A)-R(S_B)]/\tau
+\right).
 \]
 
 总目标：
 
 \[
 \mathcal L=\mathcal L_{LM}+\lambda_c\mathcal L_{credit}
-+\lambda_d\mathbb E[\text{read depth}].
++\lambda_0\mathcal L_{null}.
 \]
 
-训练开销通过 batch 内复制一部分样本实现，不做 8 次完整 forward。正式 sweep 比较 25%、50%、100% paired examples；推理只有一次 forward，不需要 utility oracle。
+另以 memory-on vs null 的配对校准 null route。正式 sweep 比较 25%、50%、100% paired examples；不做逐 head
+16 次 forward。推理只执行 top-k route，不需要 utility oracle。
 
-### 3.5 正样本与负样本
+### 3.5 Utility-gated sparse write
+
+同一个 route mask 同时控制 gradient 写入哪些 memory rows：未选择或预测为负 utility 的 head 不更新。这样正向
+共享可以跨 paraphrase 累积，而冲突 collision 不会无条件污染所有 16 个 rows。Read-only gating 与 read+write
+gating 必须作为独立消融，验证收益是否来自更好的写入隔离。
+
+### 3.6 正样本与负样本
 
 - 正 utility：当前事实 canonical supervision；
 - transfer supervision 不使用 benchmark 测试 paraphrase，避免泄漏；
@@ -139,17 +172,17 @@ gate 用 pairwise ranking / calibrated binary loss 预测 `u_{t,d}>0`：
 
 ## 4. 为什么它可能有效，以及为什么不是普通 A+B
 
-Semantic RQ 与 utility gate 解决同一个 transfer-interference 问题的两个必要部分：
+Semantic RQ 与 utility routing 解决同一个 transfer-interference 问题的两个必要部分：
 
 ```text
-Semantic RQ        -> 产生可迁移的共享候选
-RQ hierarchy       -> 表达共享的粒度
-Counterfactual gate-> 判断每一级共享是否真正降低当前损失
+Semantic RQ          -> 产生多个结构化共享候选
+Factorized read/write-> 允许不同候选获得不同信用
+Counterfactual pairs -> 用真实 loss 判断 route 是否有益
 ```
 
 只有 semantic hash：产生共享，但无法避免 false sharing。  
 只有普通 gate：没有语义结构，无法把新表述路由到已写 memory。  
-只有 level attention：仍然依赖单路线 LM loss，不能解决 Engram-Nine 指出的 credit mismatch。
+只有逐 head attention：仍然依赖单路线 LM loss，不能解决 Engram-Nine 指出的 credit mismatch。
 
 方法贡献不是“多加一个 gate”，而是第一次把 conditional memory 的 routing decision 用其因果边际 utility 显式监督。
 
@@ -190,21 +223,22 @@ Engram 因果基线：
 - Arithmetic-fixed Engram；
 - RQ-Shuffled Engram；
 - Semantic-RQ + 原始 flatten gate；
-- Semantic-RQ + hierarchical ordered gate，但无 credit loss；
+- Semantic-RQ + head-factorized router，但无 credit loss；
 - **CREDIT-Engram**。
 
 公平约束：相同 backbone、target layers、memory rows、embedding dimension、训练 tokens、optimizer search budget。除系统表外，所有 Engram 变体保持相同 trainable parameter budget；若新增 gate 参数，给 baseline 增加同规模 projection 的参数匹配对照。
 
 ### 5.4 核心消融
 
-1. 固定 prefix depth `d in {1,2,4,6,8}`；
-2. unordered softmax vs ordered continuation gate；
-3. 无 credit、on/off credit、depth-pair credit；
+1. 固定激活 heads `k in {1,2,4,8,16}`；
+2. flatten gate、head-factorized soft gate、top-k router；
+3. 无 credit、memory/null credit、equal-budget route-pair credit；
 4. Semantic vs Shuffled vs Arithmetic；
 5. 去掉 no-memory route；
 6. 去掉 locality/hard-negative credit；
 7. paired-example 比例和 `lambda_credit`；
-8. inference 时强制 depth，验证学习到的深度是否具有因果作用。
+8. read-only routing vs read+write routing；
+9. inference 时强制 route/head reset，验证 learned routing 的因果作用。
 
 超参只在 WikiBigEdit validation timestep 上选择一次，其他 benchmark 直接迁移。
 
@@ -214,20 +248,20 @@ Engram 因果基线：
 
 ```text
 语义相似
--> RQ prefix overlap 增加
--> 浅层 row 被相关改写复用
--> 该层反事实 utility 为正
--> gate continuation 与 utility 对齐
+-> 至少部分 RQ heads 复用 source-updated rows
+-> 这些 heads 的反事实 route utility 为正
+-> router score 与 utility preference 对齐
+-> harmful collision 被 null/read-write mask 拒绝
 -> paraphrase / ripple gain
 ```
 
 报告：
 
-- 每层 prefix 的 embedding cosine、relation/entity purity 和 collision load；
-- 每层 counterfactual utility 分布；
+- 每个 head 的 embedding cosine、relation/entity purity、collision load 与 utility；
+- route-pair counterfactual utility 分布；
 - gate score 与 utility 的 AUROC、ECE、Spearman；
-- paraphrase、conflict、locality、head/tail entity 的读取深度；
-- reset shared rows、shuffle codes、强制 gate/depth 后的性能变化；
+- paraphrase、conflict、locality、head/tail entity 的 active heads/null rate；
+- reset shared rows、shuffle codes、强制 route 后的性能变化；
 - Semantic 相对 Shuffled 的收益按 code overlap 和 utility 分桶。
 
 ### 5.6 效率与系统属性
@@ -238,7 +272,7 @@ Engram 因果基线：
 - counterfactual paired training 的额外 FLOPs 和 wall time；
 - GPU table 与 pinned CPU/offloaded table；
 - memory size、optimizer state、实际 touched rows；
-- adaptive depth 带来的平均有效读取层数，但不得把当前未实现的稀疏 gather 宣称为实际加速。
+- top-k routing 带来的平均有效 heads，但不得把当前未实现的稀疏 gather 宣称为实际加速。
 
 ## 6. 统计规范
 
@@ -248,14 +282,14 @@ Engram 因果基线：
 - 所有方法使用相同数据顺序；
 - 预注册 primary metric：WikiBigEdit Rephrase 与 Retention 的 harmonic mean，同时约束 Locality；
 - 不以最好 seed、最好 checkpoint 或测试集调参结果作为主表；
-- 同时报告绝对值和相对 Arithmetic、Shuffled、hierarchical-no-credit 的差值。
+- 同时报告绝对值和相对 Arithmetic、Shuffled、head-factorized-no-credit 的差值。
 
 ## 7. 成功门槛
 
 论文的关键门槛不是 CREDIT 比 Base 高，而是：
 
 1. CREDIT-Engram 在 WikiBigEdit 50K/100K 的主指标上稳定优于 Semantic-RQ flatten；
-2. 稳定优于 hierarchical-no-credit，证明收益来自 credit assignment，而不只是更多参数；
+2. 稳定优于 head-factorized-no-credit，证明收益来自 credit assignment，而不只是改变融合方式；
 3. Semantic-CREDIT 优于 Shuffled-CREDIT，证明 semantic ordering 终于被模型利用；
 4. Locality 不以不可接受的幅度下降，且综合 Pareto 优于 LoRA/FT；
 5. 至少一个外部 benchmark 复现相同方向；
@@ -265,13 +299,15 @@ Engram 因果基线：
 
 ## 8. 四张 A100 的执行计划
 
-### Phase A：地址层级审计（约 0.5--1 GPU-day）
+### Phase A：地址与共享审计（已完成 matched-50K；500K 运行中）
 
-不训练新模型，完整扫描 WikiBigEdit train/eval：prefix purity、overlap、collision、量化残差。如果不存在层级趋势，立即停止 ordered-depth 路线。
+matched-50K 已否定 ordered-depth；保留完整 prefix/head overlap、purity、collision 作为 diagnostic。500K 用于验证
+该负结论是否随 benchmark 规模稳定，不再作为 ordered architecture 的前置条件。
 
 ### Phase B：完整 10K 方法开发（约 4--8 GPU-days）
 
-四卡并行：flatten、hierarchical-no-credit、CREDIT、Shuffled-CREDIT。每个 run 都完整训练到 10K，并评官方全部指标；这不是 smoke test，而是方法选择阶段。固定 depth sweep 随后并行补齐。
+四卡并行：flatten、head-factorized-no-credit、CREDIT、Shuffled-CREDIT。每个 run 都完整训练到 10K，并评官方
+全部指标；随后完成 `k`、null、read/write 与 route-credit 消融。
 
 ### Phase C：50K/100K 主表（约 18--30 GPU-days）
 
@@ -287,22 +323,27 @@ CounterFact、ZsRE、Ripple；Qwen3-0.6B/4B 尺度；intervention、效率和 of
 
 ### 标题方向
 
-**Who Should Share a Memory? Counterfactual Credit Assignment for Semantic Conditional Memory**
+**Which Collisions Should Be Shared? Counterfactual Read-Write Routing for Conditional Memory**
 
 ### 摘要核心
 
-现有 conditional memory 使用确定性地址检索静态模式，但地址共享与 memory utility 之间没有显式信用分配。我们首先发现 semantic addressing 在大规模 lifelong editing 中带来共享收益，却无法稳定超越打乱语义的结构对照；并将其归因于扁平读取和 route utility 不可观测。CREDIT-Engram 使用层级 RQ 地址表达共享粒度，并通过低开销反事实 route pairs 监督 ordered gate 的边际 utility。在标准 lifelong knowledge editing、知识编辑与机制干预中，它应当实现更好的 transfer-retention-locality Pareto，同时保留冻结 backbone、可缓存地址与可 offload memory。
+现有 conditional memory 使用确定性地址检索静态模式，但地址 collision 与 memory utility 之间没有显式信用
+分配。我们首先在 50K lifelong edits、超过十万条配对 queries 上发现，semantic addressing 虽带来局部 prefix
+共享，却不能稳定区分有益 propagation 与有害 locality，且现有 flatten gate 无法给不同 heads 分配信用。
+CREDIT-Engram 将原始投影严格分解成参数匹配的逐 head read/write routes，并通过等激活预算的反事实 route
+pairs 监督真实 utility。在标准 lifelong knowledge editing、知识编辑与机制干预中，它应实现更好的
+transfer-retention-locality Pareto，同时保留冻结 backbone、可缓存地址与可 offload memory。
 
 ### 预期贡献
 
 1. 诊断贡献：证明 conditional memory 中 address quality 与实际 route utility 的脱节；
-2. 方法贡献：counterfactual utility-supervised hierarchical semantic memory；
+2. 方法贡献：parameter-matched head-factorized memory 与 counterfactual utility-supervised read/write routing；
 3. 实证贡献：标准 WikiBigEdit 大规模连续写入、标准 KE 外部验证和完整因果干预；
 4. 系统贡献：报告冷/热 semantic addressing 和 counterfactual training 的真实成本，而不把 memoized lookup误写成无条件 O(1)。
 
 ## 10. 风险与止损
 
-- **RQ prefix 没有粗到细语义**：保留 counterfactual utility gate，但把 route 改为多个独立 semantic code heads；不能继续声称 hierarchy。
+- **RQ prefix 没有粗到细语义**：matched-50K 已确认；v2 已改成多个并行 heads，不再声称 hierarchy。
 - **credit loss 只提高训练集 efficacy**：检查 hard negatives、locality utility 与 gate calibration；若外部改写无增益，方法不成立。
 - **Semantic-CREDIT 仍等于 Shuffled-CREDIT**：说明当前 n-gram embedding 几何不适合 edit utility；论文应转为一般 utility-gated Engram，而不能把 semantic hash列为核心贡献。
 - **两倍训练代价过高**：降低 paired-example 比例并缓存 utility labels，但主表必须如实报告训练成本。
