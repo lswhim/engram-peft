@@ -138,7 +138,7 @@ def scan_ngrams(args, comp, tok):
             break
     print(f"[scan] {seen} docs; "
           + ", ".join(f"{n}-gram uniq={len(counters[n])}" for n in args.ngram_sizes))
-    return base, counters, repr_tokens
+    return base, counters, repr_tokens, seen
 
 
 def select_ngrams(args, counters, repr_tokens, tok):
@@ -292,7 +292,7 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
 
     comp, tok = build_compressor(args.base_tokenizer)
-    base, counters, repr_tokens = scan_ngrams(args, comp, tok)
+    base, counters, repr_tokens, documents_scanned = scan_ngrams(args, comp, tok)
     selected = select_ngrams(args, counters, repr_tokens, tok)
 
     meta = {
@@ -308,6 +308,16 @@ def main() -> None:
         "projection": "autoencoder" if args.projection_dim > 0 else "none",
         "projection_dim": int(args.projection_dim),
         "address_corpus_fields": args.text_columns or [args.text_column],
+        "documents_scanned": int(documents_scanned),
+        "max_ngrams_per_size": int(args.max_ngrams_per_size),
+        "min_count": int(args.min_count),
+        "unique_ngrams_before_selection": {
+            str(order): len(counters[order]) for order in args.ngram_sizes
+        },
+        "selected_ngrams": {
+            str(order): len(selected[order]["keys"]) for order in args.ngram_sizes
+        },
+        "seed": int(args.seed),
     }
     for n in args.ngram_sizes:
         keys, texts = selected[n]["keys"], selected[n]["texts"]
