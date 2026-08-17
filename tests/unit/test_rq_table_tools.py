@@ -47,6 +47,8 @@ def test_shuffle_rq_table_is_deterministic_and_auditable(tmp_path: Path) -> None
             source / f"codes_{ngram_size}.npy",
             np.asarray([[i % 4, (i // 2) % 4] for i in range(8)], dtype=np.uint16),
         )
+        (source / f"rq_{ngram_size}.faiss").write_bytes(f"rq-{ngram_size}".encode())
+    (source / "projector_2.pt").write_bytes(b"projector")
 
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -65,6 +67,12 @@ def test_shuffle_rq_table_is_deterministic_and_auditable(tmp_path: Path) -> None
             np.load(first / f"codes_{ngram_size}.npy"),
             np.load(second / f"codes_{ngram_size}.npy"),
         )
+        assert (first / f"rq_{ngram_size}.faiss").read_bytes() == f"rq-{ngram_size}".encode()
+    assert (first / "projector_2.pt").read_bytes() == b"projector"
+    assert manifest["ngram_sizes"]["2"]["runtime_artifacts"] == [
+        "rq_2.faiss",
+        "projector_2.pt",
+    ]
 
 
 def test_shuffle_rq_table_refuses_nonempty_output(tmp_path: Path) -> None:

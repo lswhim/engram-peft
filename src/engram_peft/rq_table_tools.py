@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,25 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def copy_rq_runtime_artifacts(
+    source_dir: Path, output_dir: Path, ngram_sizes: list[int]
+) -> dict[int, list[str]]:
+    """Copy frozen quantizers/projectors required for dynamic OOV encoding."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied: dict[int, list[str]] = {}
+    for ngram_size in ngram_sizes:
+        copied[ngram_size] = []
+        for artifact_name in (
+            f"rq_{ngram_size}.faiss",
+            f"projector_{ngram_size}.pt",
+        ):
+            source_artifact = source_dir / artifact_name
+            if source_artifact.is_file():
+                shutil.copy2(source_artifact, output_dir / artifact_name)
+                copied[ngram_size].append(artifact_name)
+    return copied
+
+
 def shuffle_rq_table(
     source_dir: Path,
     output_dir: Path,
@@ -96,6 +116,9 @@ def shuffle_rq_table(
     ngram_sizes = [int(value) for value in meta["ngram_sizes"]]
     num_levels = int(meta["num_levels"])
     codebook_size = int(meta["codebook_size"])
+    runtime_artifacts = copy_rq_runtime_artifacts(
+        source_dir, output_dir, ngram_sizes
+    )
     per_size: dict[str, Any] = {}
     access_payload = (
         np.load(access_counts_path, allow_pickle=False)
@@ -132,6 +155,9 @@ def shuffle_rq_table(
         np.save(output_dir / f"codes_{ngram_size}.npy", shuffled)
         np.save(output_dir / f"permutation_{ngram_size}.npy", permutation)
 
+        # A shuffled table must remain a complete runtime RQ address function,
+        # not merely an offline key/code dictionary.  Dynamic OOVs use the same
+        # frozen quantizer (and optional projector) as the semantic source table.
         histograms_preserved = all(
             np.array_equal(
                 np.bincount(codes[:, level].astype(np.int64), minlength=codebook_size),
@@ -181,6 +207,7 @@ def shuffle_rq_table(
             "access_weighted_histograms_preserved": weighted_preserved,
             "accessed_rows_moved_fraction": accessed_moved_fraction,
             "singleton_frequency_rows": singleton_rows,
+            "runtime_artifacts": runtime_artifacts[ngram_size],
         }
 
     shuffled_meta = dict(meta)
