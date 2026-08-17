@@ -165,6 +165,13 @@ Arithmetic 三 seeds 已完成。50K Arithmetic 的 Efficacy/Generalization/Loca
 `+2.815/+2.948` pp；但最大规模的效应明显大于 1K，支持 collision pressure 下 semantic sharing 更有价值的
 趋势性预测。严格语义几何归因仍需等待 load-matched control，不能只凭 Arithmetic 对比完成。
 
+补充的 Runtime-randomized RQ + flatten 三 seeds 也已完成。其 50K Efficacy/Generalization/Locality/Multi-hop 为
+`55.871±0.046 / 53.179±0.090 / 47.189±0.150 / 39.432±0.332`。Semantic-flat − Runtime-randomized-flat 的
+配对效应为：Efficacy `+1.364` pp，CI `[+0.903,+1.832]`；Generalization `+1.884` pp，CI
+`[+1.420,+2.327]`；Locality `+0.348` pp，CI `[-0.128,+0.794]`；Multi-hop `+0.105` pp，CI
+`[-0.957,+1.216]`。这支持 semantic ownership 对写入与改写泛化有贡献，但该随机化会改变 per-head marginal
+bucket loads，因此仍是 supporting control，不能替代 strict load-matched 归因。
+
 ### 4.3 离线表覆盖与动态 OOV 审计
 
 对同一 50K chronological train stream 和固定 2,000-case evaluation manifest，按实际 tokenizer、`max_length=128`
