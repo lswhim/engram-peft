@@ -2,8 +2,8 @@
 
 > 版本：v3（2026-08-18）
 > 目标：ICLR 2027 方法论文；标准 benchmark、完整规模、可证伪因果对照
-> 资源：4 × NVIDIA A100 40GB  
-> 当前状态：10K 四方法 × 三 seed 已完成；冻结方法后的 WikiBigEdit-50K 正式 scaling 正在运行
+> 资源：4 × NVIDIA A100 40GB
+> 当前状态：10K 四方法 × 三 seed 已完成；50K scale-development 正在运行；官方八时间步主协议待运行
 
 ## 1. 一句话故事
 
@@ -128,24 +128,30 @@ pp，方向一致。
 
 ## 5. 正式实验协议
 
-### 5.1 主实验：WikiBigEdit lifelong scaling
+### 5.1 主实验：WikiBigEdit official lifelong protocol
 
-固定协议：
+开发阶段固定配置：
 
 ```text
 backbone        = Qwen3-1.7B-Base
 address encoder = Qwen3-Embedding-4B
 RQ              = M=8, K=16
 active heads    = k=4（10K development 后冻结）
-writes          = 1K / 5K / 10K / 50K / 100K
+writes          = 1K / 5K / 10K / 50K / 100K（scale-development checkpoints）
 seeds           = 42 / 123 / 456
 ```
 
-50K 使用由相同 chronological train split 构建的 50K 地址统计表，当前正在运行。100K 开始前必须重新构建
-100K 地址表与冻结 evaluation cohorts；不能直接沿用 50K specificity prior 后宣称标准 100K scaling。
+当前 50K 使用官方原始 edits 转换出的 chronological stream 与固定历史 cohorts，但 evaluator 是自建的完整
+target-token accuracy，Locality 评价的是 locality ground-truth accuracy，且旧 loader 遗漏 Personas。因此该实验是
+**完整规模的方法开发与 scaling 证据**，不是官方 WikiBigEdit 主表；不能在论文中把两者混称。
 
-每个 milestone 报告 efficacy、rephrase/generalization、locality、multi-hop/persona（数据存在时）、最早 cohort
-retention 与 forgetting。所有方法使用相同数据顺序、训练 tokens、optimizer 和 checkpoint。
+最终主表严格复现官方八个真实时间步：每个 timestep 写入该时间段 edits，随后在 Update、Rephrase、Personas、
+Mhop、Locality 五轴评测，并对所有过去 timesteps 做 retention/forgetting。评分保持官方的 `Q: ... A:`
+teacher-forced target-token accuracy；Locality 使用编辑前后预测保持率，而非答案准确率。官方数据的 Personas 字段
+必须保留且只用于评测。训练集、地址统计表和 timestep 边界在实验前冻结。
+
+100K development curve 开始前也必须重新构建匹配前 100K train split 的 RQ 表；不能沿用 50K specificity prior
+后宣称标准 100K scaling。所有方法使用相同数据顺序、训练 tokens、optimizer 和 checkpoint。
 
 ### 5.2 五个必要主表方法
 
@@ -239,16 +245,18 @@ semantic embedding neighborhood
 - 完成地址审计、mass-preserving control、k sweep；
 - 完成 10K 四方法 × 三 seed。
 
-### Phase B：WikiBigEdit-50K（运行中）
+### Phase B：WikiBigEdit-50K scale-development（运行中）
 
 - GPU0/1/2：各固定一个 seed，顺序运行 Semantic flatten、Shuffled flatten、Shuffled aware、Semantic aware；
 - GPU3：Arithmetic 三 seed；
-- 共 15 个 50K 完整训练，每个评测 1K/5K/10K/50K checkpoint。
+- 共 15 个 50K 完整训练，每个评测 1K/5K/10K/50K checkpoint；用于验证规模稳定性，不替代官方主表。
 
-### Phase C：100K 与外部 benchmark
+### Phase C：官方八 timestep 主表、100K development 与外部 benchmark
 
-- 构建严格匹配前 100K train split 的 RQ 表、specificity prior 与 evaluation cohorts；
-- 运行 100K 主方法三 seed；
+- 从官方八个 JSON timestep 重建包含 Personas 的完整 manifest；
+- 使用官方 `Q:/A:` target-token 与 pre/post locality-preservation evaluator；
+- 构建严格匹配各冻结 train split 的 RQ 表和 specificity prior；
+- 运行官方 lifelong 主表，并补充 100K development curve；
 - 并行 CounterFact、ZsRE、Ripple/MQuAKE。
 
 ### Phase D：机制、效率和尺度

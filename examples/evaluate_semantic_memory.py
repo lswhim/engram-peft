@@ -26,6 +26,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embed-batch-size", type=int, default=64)
     parser.add_argument("--geometry-cache", type=Path)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--prompt-format",
+        choices=("plain", "qa"),
+        default="plain",
+        help="Use the WikiBigEdit Q:/A: evaluation template when set to qa.",
+    )
+    parser.add_argument(
+        "--locality-mode",
+        choices=("answer_accuracy", "pre_post_preservation"),
+        default="answer_accuracy",
+        help="Official WikiBigEdit locality compares edited predictions with the base model.",
+    )
     return parser.parse_args()
 
 
@@ -46,15 +58,30 @@ def first_nonempty(values: list[str]) -> str | None:
     return next((str(value).strip() for value in values if str(value).strip()),None)
 
 
+def formatted_pair(tokenizer: Any, prompt: str, answer: str, prompt_format: str) -> tuple[list[int], list[int]]:
+    if prompt_format == "qa":
+        prefix = f"Q: {prompt} A:"
+        prompt_ids = tokenizer(prefix, add_special_tokens=True)["input_ids"]
+    else:
+        prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
+    answer_ids = tokenizer(" " + answer.strip(), add_special_tokens=False)["input_ids"]
+    return prompt_ids, answer_ids
+
+
 @torch.inference_mode()
-def target_token_accuracy(tokenizer: Any, model: Any, pairs: list[tuple[str, str]], batch_size: int) -> list[float]:
+def target_token_predictions(
+    tokenizer: Any,
+    model: Any,
+    pairs: list[tuple[str, str]],
+    batch_size: int,
+    prompt_format: str = "plain",
+) -> tuple[list[float], list[list[int]]]:
     encoded=[]
     for prompt, answer in pairs:
-        prompt_ids=tokenizer(prompt, add_special_tokens=True)["input_ids"]
-        answer_ids=tokenizer(" "+answer.strip(), add_special_tokens=False)["input_ids"]
+        prompt_ids, answer_ids = formatted_pair(tokenizer, prompt, answer, prompt_format)
         encoded.append((prompt_ids+answer_ids,len(prompt_ids)))
     pad=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
-    scores=[]
+    scores=[]; token_predictions=[]
     for start in range(0,len(encoded),batch_size):
         batch=encoded[start:start+batch_size]; width=max(len(ids) for ids,_ in batch)
         ids=torch.full((len(batch),width),pad,dtype=torch.long,device=model.device); mask=torch.zeros_like(ids)
@@ -63,10 +90,30 @@ def target_token_accuracy(tokenizer: Any, model: Any, pairs: list[tuple[str, str
         for row,(tokens,prompt_len) in enumerate(batch):
             gold=ids[row,prompt_len:len(tokens)]; pred=predictions[row,prompt_len-1:len(tokens)-1]
             scores.append(float((pred==gold).float().mean()) if gold.numel() else 0.0)
+            token_predictions.append(pred.detach().cpu().tolist())
         complete=min(start+len(batch),len(encoded))
         if complete==len(encoded) or complete//1000 != start//1000:
             print(f"[target-score {complete}/{len(encoded)}]",flush=True)
+    return scores, token_predictions
+
+
+def target_token_accuracy(
+    tokenizer: Any,
+    model: Any,
+    pairs: list[tuple[str, str]],
+    batch_size: int,
+    prompt_format: str = "plain",
+) -> list[float]:
+    scores, _ = target_token_predictions(
+        tokenizer, model, pairs, batch_size, prompt_format
+    )
     return scores
+
+
+def prediction_preservation(before: list[int], after: list[int]) -> float:
+    if len(before) != len(after):
+        raise ValueError("pre/post predictions must have identical lengths")
+    return float(np.mean(np.equal(before, after))) if before else 0.0
 
 
 @torch.inference_mode()
@@ -113,11 +160,7 @@ def main() -> None:
     args=parse_args(); cases=read_manifest(args.manifest,args.limit)
     tokenizer=AutoTokenizer.from_pretrained(args.model,trust_remote_code=True)
     base=AutoModelForCausalLM.from_pretrained(args.model,dtype=torch.bfloat16,low_cpu_mem_usage=True).to("cuda")
-    model: Any=base
-    if args.engram_weights:
-        from engram_peft import EngramModel
-        model=EngramModel.from_pretrained(base,args.engram_weights,tokenizer=tokenizer).to("cuda")
-    model.eval(); query_specs=[]; condition_specs=[]; skipped_unscorable=0; skipped_conditions=0
+    base.eval(); query_specs=[]; condition_specs=[]; skipped_unscorable=0; skipped_conditions=0
     for case in cases:
         for query in case["queries"]:
             answer=first_nonempty(query.get("answers",[]))
@@ -129,8 +172,37 @@ def main() -> None:
                 condition_answer=first_nonempty(answers)
                 if condition_answer is None: skipped_conditions+=1
                 else: condition_specs.append((len(query_specs)-1,prompt,condition_answer))
-    query_scores=target_token_accuracy(tokenizer,model,[(q["prompt"],answer) for _,q,answer in query_specs],args.batch_size)
-    condition_scores=target_token_accuracy(tokenizer,model,[(prompt,answer) for _,prompt,answer in condition_specs],args.batch_size) if condition_specs else []
+    pairs=[(q["prompt"],answer) for _,q,answer in query_specs]
+    locality_indices=[index for index,(_,query,_) in enumerate(query_specs) if query["axis"]=="locality"]
+    base_locality_predictions: dict[int,list[int]]={}
+    if args.locality_mode == "pre_post_preservation" and locality_indices:
+        _, predictions=target_token_predictions(
+            tokenizer,
+            base,
+            [pairs[index] for index in locality_indices],
+            args.batch_size,
+            args.prompt_format,
+        )
+        base_locality_predictions=dict(zip(locality_indices,predictions,strict=True))
+
+    model: Any=base
+    if args.engram_weights:
+        from engram_peft import EngramModel
+        model=EngramModel.from_pretrained(base,args.engram_weights,tokenizer=tokenizer).to("cuda")
+    model.eval()
+    query_scores,query_predictions=target_token_predictions(
+        tokenizer,model,pairs,args.batch_size,args.prompt_format
+    )
+    if args.locality_mode == "pre_post_preservation":
+        for index,pre in base_locality_predictions.items():
+            post=query_predictions[index]
+            try:
+                query_scores[index]=prediction_preservation(pre,post)
+            except ValueError as error:
+                raise RuntimeError(
+                    f"locality token length mismatch at query {index}"
+                ) from error
+    condition_scores=target_token_accuracy(tokenizer,model,[(prompt,answer) for _,prompt,answer in condition_specs],args.batch_size,args.prompt_format) if condition_specs else []
     condition_by_query: dict[int,list[bool]]=defaultdict(list)
     for (index,_,_),score in zip(condition_specs,condition_scores,strict=True): condition_by_query[index].append(score==1.0)
     rows=[]
@@ -159,7 +231,7 @@ def main() -> None:
                 temporary=args.geometry_cache.with_suffix(".tmp")
                 temporary.write_text(json.dumps(cached),encoding="utf-8"); os.replace(temporary,args.geometry_cache)
         quartile_bins([rows[i] for i in geometry_indices])
-    payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"skipped_unscorable_queries":skipped_unscorable,"skipped_unscorable_conditions":skipped_conditions,"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","geometry_bins":"within-run quartiles"}}
+    payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"skipped_unscorable_queries":skipped_unscorable,"skipped_unscorable_conditions":skipped_conditions,"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","prompt_format":args.prompt_format,"locality_mode":args.locality_mode,"geometry_bins":"within-run quartiles"}}
     args.output.parent.mkdir(parents=True,exist_ok=True); samples=args.output.with_suffix(".jsonl")
     with samples.open("w",encoding="utf-8") as handle:
         for row in rows: handle.write(json.dumps(row,ensure_ascii=False)+"\n")
