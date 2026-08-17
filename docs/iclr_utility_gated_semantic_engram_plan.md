@@ -149,13 +149,35 @@ Semantic-RQ + flatten 的 mean ± sample std（%）为：
 | 10K | 55.554 ± 0.174 | 54.402 ± 0.009 | 45.102 ± 0.043 | 38.525 ± 0.187 |
 | 50K | **57.235 ± 0.233** | **55.063 ± 0.156** | **47.538 ± 0.151** | **39.537 ± 0.480** |
 
-在当前唯一完成的 matched Arithmetic seed 42 上，Semantic-flatten 的 Efficacy/Generalization 差值从 1K 的
-`+1.213/+2.589` 增至 50K 的 `+3.255/+3.218` pp；50K query-level case-cluster bootstrap 95% CI 分别为
-`[+2.559,+3.951]` 和 `[+2.425,+4.041]` pp。该结果提示 semantic sharing 的相对价值可能随随机 collision
-压力上升而增强，但 Arithmetic 其余 seeds、Shuffled 与 collision-aware 方法尚未齐全，因此目前不能把趋势归因于
-语义几何，也不能报告正式跨 seed 方法差异。
+在已完成的 matched Arithmetic seeds 42/123 上，50K Semantic-flatten − Arithmetic 的配对均值为：Efficacy
+`+2.880`、Generalization `+3.094`、Locality `+0.432`、Multi-hop `+1.790` pp。以 seed 为外层、case 为内层的
+hierarchical bootstrap 95% CI 分别为 `[+2.176,+3.591]`、`[+2.516,+3.646]`、`[-0.118,+0.965]`、
+`[+0.589,+3.105]`。该结果提示 semantic sharing 的相对价值可能随 collision pressure 上升而增强，但 Arithmetic
+seed 456、load-matched control 与 collision-aware 方法尚未齐全，因此这些仍是 interim 结果，不能提前写成正式
+跨 seed 或语义几何因果结论。
 
-### 4.3 能说与不能说的结论
+### 4.3 离线表覆盖与动态 OOV 审计
+
+对同一 50K chronological train stream 和固定 2,000-case evaluation manifest，按实际 tokenizer、`max_length=128`
+与 prompt 口径重新统计候选 n-gram：
+
+| Source | 2-gram offline coverage | 3-gram offline coverage |
+|---|---:|---:|
+| 50K training stream | 100.00% | 98.29% |
+| Evaluation queries | 90.80% | 76.70% |
+
+因此不能把当前系统描述为“评测时纯离线查表”：evaluation candidate accesses 中约 `9.20%` 的 2-gram 和
+`23.30%` 的 3-gram 首次需要 frozen Qwen3-Embedding→RQ，并随后写入 persistent cache。正式实验必须同时报告：
+
+1. offline-hit、dynamic-OOV 与 aggregate 三个切片的任务指标；
+2. 冷路径 encoder+RQ latency、首次 cache 构建成本、warm-cache lookup latency；
+3. dynamic cache 大小、host-memory 占用和重复 query hit rate；
+4. 禁止 OOV 回退 arithmetic，并用 trace 证明训练/评测的 code 生成规则一致。
+
+这一审计不削弱 semantic generalization 的定义，反而使其可检验：若提升只存在于 offline-hit query，方法证明的是
+离线词典共享；只有 dynamic-OOV query 也获得提升，才能支持“新表面形式可由语义地址泛化”的更强 claim。
+
+### 4.4 能说与不能说的结论
 
 当前能够支持：
 
