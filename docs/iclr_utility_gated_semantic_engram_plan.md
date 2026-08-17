@@ -297,6 +297,21 @@ Engram 因果基线：
 
 建议预注册最小有效差异：WikiBigEdit 主指标相对 strongest matched Engram baseline 至少 +1.5 pp，三个 seed 方向一致，paired CI 排除 0。若只有 +0.2 pp 或只在单个 milestone 成立，不足以支撑 ICLR 方法论文。
 
+### 7.1 冻结的 10K development gate
+
+在 CREDIT 结果产生前，已有相同 Qwen3-1.7B、Qwen3-Embedding-4B、RQ M=8/K=16、seed 42、10K
+chronological milestone 的旧版 flatten 结果为：overall efficacy 55.47%、generalization 54.40%、locality
+44.89%；matched shuffled 为 54.65%、52.92%、44.90%。因此开发阶段不按结果临时改门槛：
+
+- CREDIT 的 overall generalization 至少达到 **55.90%**（相对 strongest matched flatten +1.5 pp）；
+- overall locality 不得低于 **44.39%**（相对 flatten 最多下降 0.5 pp）；
+- 必须同时优于新的 head-factorized-no-credit，排除收益仅来自投影重参数化；
+- Semantic-CREDIT 必须优于 Shuffled-CREDIT，排除 credit router 与 semantic code 无关；
+- 单 seed 10K 只用于冻结方法/超参。正式 claim 仍需 50K/100K、3 seeds 和 paired bootstrap CI。
+
+该 development gate 使用当前自建的 teacher-forced complete-target-token accuracy，只用于方法开发；不能替代
+WikiBigEdit 官方完整主表中的 Update、Rephrase、Locality、Personas、Multi-hop 和 retention。
+
 ## 8. 四张 A100 的执行计划
 
 ### Phase A：地址与共享审计（已完成 matched-50K；500K 运行中）
