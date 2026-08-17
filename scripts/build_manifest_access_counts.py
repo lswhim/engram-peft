@@ -11,7 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
-from scripts.build_crosslingual_access_counts import accumulate_access_counts
+from scripts.build_crosslingual_access_counts import (
+    accumulate_access_counts,
+    valid_access_mask,
+)
+from scripts.build_lm_slice_manifest import poly_keys, table_positions
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,6 +29,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-length", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--prompt-format", choices=("plain", "qa"), default="plain")
+    parser.add_argument(
+        "--source",
+        choices=("canonical", "queries"),
+        default="canonical",
+        help="Count canonical training pairs or every scorable evaluation query.",
+    )
     return parser.parse_args()
 
 
@@ -68,19 +78,29 @@ def main() -> None:
         raise ValueError(f"table base={meta['base']} does not match tokenizer base={base}")
 
     rows: list[list[int]] = []
+    cases = 0
     with args.manifest.open(encoding="utf-8") as handle:
         for line in handle:
             case = json.loads(line)
-            rows.append(canonical_token_ids(
-                tokenizer,
-                str(case["prompt"]),
-                str(case["target"]),
-                args.max_length,
-                args.prompt_format,
-            ))
-            if args.subset and len(rows) >= args.subset:
+            cases += 1
+            pairs = [(str(case["prompt"]), str(case["target"]))]
+            if args.source == "queries":
+                pairs = [
+                    (str(query["prompt"]), str(query["answers"][0]))
+                    for query in case.get("queries", [])
+                    if query.get("answers") and str(query["answers"][0]).strip()
+                ]
+            rows.extend(
+                canonical_token_ids(
+                    tokenizer, prompt, target, args.max_length, args.prompt_format
+                )
+                for prompt, target in pairs
+            )
+            if args.subset and cases >= args.subset:
                 break
     pad_id = int(tokenizer.pad_token_id)
+    candidate_accesses = {order: 0 for order in orders}
+    covered_accesses = {order: 0 for order in orders}
     for start in range(0, len(rows), args.batch_size):
         batch_rows = rows[start : start + args.batch_size]
         width = args.max_length
@@ -91,6 +111,12 @@ def main() -> None:
             ids[row_index, :length] = token_ids[:length]
             attention[row_index, :length] = 1
         compressed = np.asarray(compressor.map_ids(ids), dtype=np.int64)
+        for order, table_keys in keys.items():
+            batch_keys = poly_keys(compressed, order, base)
+            _, covered = table_positions(batch_keys, table_keys)
+            valid = valid_access_mask(attention, order)
+            candidate_accesses[order] += int(valid.sum())
+            covered_accesses[order] += int((covered & valid).sum())
         accumulate_access_counts(
             compressed,
             attention,
@@ -110,7 +136,9 @@ def main() -> None:
     payload = {
         "status": "complete",
         "manifest": str(args.manifest),
-        "examples": len(rows),
+        "cases": cases,
+        "pairs": len(rows),
+        "source": args.source,
         "max_length": args.max_length,
         "prompt_format": args.prompt_format,
         "table_dir": str(args.table_dir),
@@ -119,6 +147,13 @@ def main() -> None:
                 "table_rows": len(counts[order]),
                 "accessed_rows": int(np.count_nonzero(counts[order])),
                 "total_accesses": int(counts[order].sum()),
+                "candidate_accesses": candidate_accesses[order],
+                "covered_accesses": covered_accesses[order],
+                "offline_coverage": (
+                    covered_accesses[order] / candidate_accesses[order]
+                    if candidate_accesses[order]
+                    else None
+                ),
                 "sha256": digest(counts[order]),
             }
             for order in orders
