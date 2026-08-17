@@ -53,6 +53,14 @@ case "$MODE" in
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
     ;;
+  semantic_specificity_reseed)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    ;;
+  shuffled_specificity_reseed)
+    TABLE="$SHUFFLED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    ;;
   semantic_specificity_k8)
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=8,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
