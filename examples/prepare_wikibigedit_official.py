@@ -40,7 +40,9 @@ def convert_row(row: dict[str, Any], timestep: str, index: int) -> dict[str, Any
     if prompt is None or target is None:
         return None
 
-    queries: list[dict[str, Any]] = []
+    queries: list[dict[str, Any]] = [
+        query(prompt, target, "should_propagate", "efficacy")
+    ]
     rephrase = nonempty(row.get("rephrase"))
     if rephrase is not None:
         queries.append(query(rephrase, target, "should_propagate", "generalization"))
@@ -87,6 +89,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--files", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--timestep-dir",
+        type=Path,
+        help="Optionally also write one JSONL manifest per official timestep.",
+    )
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -99,15 +106,29 @@ def main() -> None:
         for path in args.files:
             rows = json.loads(path.read_text(encoding="utf-8"))
             timestep_total = 0
+            timestep_handle = None
+            timestep_temporary = None
+            timestep_output = None
+            if args.timestep_dir is not None:
+                args.timestep_dir.mkdir(parents=True, exist_ok=True)
+                timestep_output = args.timestep_dir / f"{path.stem}.jsonl"
+                timestep_temporary = timestep_output.with_suffix(".jsonl.tmp")
+                timestep_handle = timestep_temporary.open("w", encoding="utf-8")
             for index, row in enumerate(rows):
                 case = convert_row(row, path.stem, index)
                 if case is None:
                     skipped += 1
                     continue
                 handle.write(json.dumps(case, ensure_ascii=False) + "\n")
+                if timestep_handle is not None:
+                    timestep_handle.write(json.dumps(case, ensure_ascii=False) + "\n")
                 timestep_total += 1
                 total += 1
                 counts.update(item["axis"] for item in case["queries"])
+            if timestep_handle is not None:
+                timestep_handle.close()
+                assert timestep_temporary is not None and timestep_output is not None
+                timestep_temporary.replace(timestep_output)
             timesteps.append({"name": path.stem, "cases": timestep_total})
     temporary.replace(args.output)
     print(

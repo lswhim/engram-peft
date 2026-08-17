@@ -23,6 +23,7 @@ from transformers import (
 from engram_peft import (
     EngramConfig,
     EngramDataCollator,
+    EngramModel,
     EngramTrainer,
     get_engram_model,
 )
@@ -235,8 +236,18 @@ def train_engram(
         if hasattr(config, k):
             setattr(config, k, v)
 
-    # base_model is already a PreTrainedModel
-    model = get_engram_model(base_model, config, wash_tokenizer(tokenizer))
+    resume_path = getattr(args, "resume_engram_weights", None)
+    if resume_path:
+        model = EngramModel.from_pretrained(
+            base_model,
+            resume_path,
+            tokenizer=wash_tokenizer(tokenizer),
+        )
+        config = model.config
+        print(f"[engram] resumed adapter from {resume_path}")
+    else:
+        # base_model is already a PreTrainedModel
+        model = get_engram_model(base_model, config, wash_tokenizer(tokenizer))
     model.print_trainable_parameters()
 
     warmup_steps = int(args.max_steps * 0.03)

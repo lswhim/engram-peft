@@ -22,6 +22,7 @@ def test_convert_row_preserves_all_official_axes() -> None:
     assert case["prompt"] == row["update"]
     assert case["target"] == row["ans"]
     assert [item["axis"] for item in case["queries"]] == [
+        "efficacy",
         "generalization",
         "personas",
         "personas",
@@ -41,4 +42,4 @@ def test_convert_row_skips_untrainable_case_and_empty_optional_queries() -> None
     )
 
     assert case is not None
-    assert case["queries"] == []
+    assert [item["axis"] for item in case["queries"]] == ["efficacy"]

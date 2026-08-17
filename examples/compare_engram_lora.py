@@ -64,6 +64,17 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument(
+        "--prompt_format",
+        choices=("plain", "qa"),
+        default="plain",
+        help="Format canonical supervision as plain text or WikiBigEdit Q:/A:.",
+    )
+    parser.add_argument(
+        "--resume_engram_weights",
+        type=str,
+        help="Continue an Engram adapter from a prior official timestep.",
+    )
+    parser.add_argument(
         "--model_name",
         type=str,
         default="Qwen/Qwen3-1.7B",

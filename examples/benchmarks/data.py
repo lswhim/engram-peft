@@ -204,6 +204,7 @@ def prepare_dataset(
     dataset: str = "tinystories",
     seed: int = 42,
     manifest_path: str | None = None,
+    prompt_format: str = "plain",
 ) -> tuple[Any, Any]:
     """Standardized dataset preparation. dataset in {tinystories, biomed, counterfact, zsre, mquake}."""
     if dataset == "semantic_manifest":
@@ -265,8 +266,11 @@ def prepare_dataset(
             for prompt, target in zip(
                 examples["prompt"], examples["target"], strict=True
             ):
+                formatted_prompt = (
+                    f"Q: {prompt} A:" if prompt_format == "qa" else str(prompt)
+                )
                 prompt_ids = tokenizer(
-                    str(prompt), add_special_tokens=True
+                    formatted_prompt, add_special_tokens=True
                 )["input_ids"]
                 target_ids = tokenizer(
                     " " + str(target).strip(), add_special_tokens=False

@@ -109,6 +109,7 @@ class BenchmarkEngine:
             dataset=getattr(args, "dataset", "tinystories"),
             seed=args.seed,
             manifest_path=getattr(args, "manifest_path", None),
+            prompt_format=getattr(args, "prompt_format", "plain"),
         )
 
         self.base_model = None

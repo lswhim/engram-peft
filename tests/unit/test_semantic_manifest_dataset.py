@@ -29,6 +29,37 @@ def test_semantic_manifest_trains_only_on_canonical_prompt_target(tmp_path):
     assert all(value == -100 for value in labels[4:])
 
 
+def test_semantic_manifest_supports_wikibigedit_qa_format(tmp_path):
+    class CharacterTokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def __call__(self, text, add_special_tokens=True, **kwargs):
+            del add_special_tokens, kwargs
+            assert isinstance(text, str)
+            values = [ord(character) for character in text]
+            return {"input_ids": values, "attention_mask": [1] * len(values)}
+
+    path = tmp_path / "manifest.jsonl"
+    path.write_text(json.dumps({"prompt":"canonical","target":"new","queries":[]}) + "\n")
+    train, _ = prepare_dataset(
+        CharacterTokenizer(),
+        0,
+        1,
+        16,
+        num_proc=1,
+        dataset="semantic_manifest",
+        manifest_path=str(path),
+        prompt_format="qa",
+    )
+    assert len(train) == 1
+    labels = train[0]["labels"]
+    assert labels[: len("Q: canonical A:")] == [-100] * len("Q: canonical A:")
+    assert labels[len("Q: canonical A:") : len("Q: canonical A: new")] == [
+        ord(character) for character in " new"
+    ]
+
+
 def test_chronological_trainer_uses_sequential_sampler():
     trainer=object.__new__(ChronologicalEngramTrainer)
     trainer.train_dataset=[1,2,3]

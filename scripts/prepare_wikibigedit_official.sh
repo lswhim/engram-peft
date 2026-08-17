@@ -5,6 +5,7 @@ ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}"
 PY="${ENGRAM_PYTHON:-/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python}"
 DATA_DIR="$ROOT/data/wikibigedit_official"
 OUTPUT="$ROOT/data/semantic_memory/wikibigedit_official_chronological.jsonl"
+TIMESTEP_DIR="$ROOT/data/semantic_memory/wikibigedit_official_timesteps"
 BASE_URL=https://huggingface.co/datasets/lukasthede/WikiBigEdit/resolve/main
 
 FILES=(
@@ -35,5 +36,7 @@ done
 cd "$ROOT"
 "$PY" examples/prepare_wikibigedit_official.py \
   --files "${paths[@]}" \
-  --output "$OUTPUT"
+  --output "$OUTPUT" \
+  --timestep-dir "$TIMESTEP_DIR"
 wc -l "$OUTPUT"
+wc -l "$TIMESTEP_DIR"/*.jsonl
