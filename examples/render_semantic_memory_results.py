@@ -116,6 +116,8 @@ def main() -> None:
         ("Qwen3-Embedding-0.6B","RQ-Shuffled",args.root/"pararel_k16_controls"/"shuffled_seed42.json"),
         ("Qwen3-Embedding-4B","Semantic-RQ",args.root/"pararel_embedder_sweep"/"qwen3emb4b_semantic_k16_seed42.json"),
         ("Qwen3-Embedding-4B","RQ-Shuffled",args.root/"pararel_embedder_sweep"/"qwen3emb4b_shuffled_k16_seed42.json"),
+        ("Qwen3-Embedding-8B","Semantic-RQ",args.root/"pararel_embedder_sweep"/"qwen3emb8b_semantic_k16_seed42.json"),
+        ("Qwen3-Embedding-8B","RQ-Shuffled",args.root/"pararel_embedder_sweep"/"qwen3emb8b_shuffled_k16_seed42.json"),
     )
     embedder_rows="".join(
         f"<tr><th>{embedder}</th><td>{method}</td><td>16</td><td>{100*load(path)['metrics']['role/should_propagate']['mean']:.2f}</td></tr>"
