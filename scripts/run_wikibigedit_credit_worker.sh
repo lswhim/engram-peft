@@ -25,6 +25,14 @@ case "$MODE" in
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=flatten"
     ;;
+  semantic_flatten_reseed)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=flatten"
+    ;;
+  shuffled_flatten_reseed)
+    TABLE="$SHUFFLED_TABLE"
+    EXTRA="memory_fusion=flatten"
+    ;;
   semantic_factorized)
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_use_null=False,credit_loss_weight=0.0"
