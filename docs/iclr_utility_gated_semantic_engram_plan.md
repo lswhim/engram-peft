@@ -329,6 +329,28 @@ semantic embedding neighborhood
 报告 query-level code overlap、selected bucket load、updated-row reuse、collision answer entropy，以及这些量与单 query
 增益/失败的关系。地址层面的相关性必须由 intervention 支撑，不能只画 embedding t-SNE。
 
+### 6.4 Held-out target-conflict probe：已完成
+
+为避免在同一训练样本上自证 bucket purity，按 chronological stream 固定切分：前 40K edits 估计每个物理 bucket 的
+target-token posterior，后 10K edits 仅作查询。每个 held-out target context 比较 top-specific、bottom-specific 与
+random-k 四个 heads 的 posterior surprisal；仅使用离线表完整覆盖的 context，最终包含 9,580 cases、每组
+120,012 head-events，并做 5,000 次 paired case-cluster bootstrap。
+
+| Address | Top-specific | Random-k | Bottom-specific | Top−Random | Top−Bottom |
+|---|---:|---:|---:|---:|---:|
+| Semantic RQ | **8.511** | 8.784 | 9.031 | **−0.273** | **−0.520** |
+| Load-matched shuffled | **8.862** | 9.068 | 9.219 | **−0.206** | **−0.358** |
+
+两种地址中 top-specific 都优于 random/bottom，证明低负载选择包含一般 load regularization；但 Semantic 的优势
+显著更强。逐 case difference-in-differences：
+
+- `(Semantic Top−Random) − (LoadMatched Top−Random) = −0.0672`，95% CI `[-0.0922,−0.0423]`；
+- `(Semantic Top−Bottom) − (LoadMatched Top−Bottom) = −0.1628`，95% CI `[-0.1915,−0.1346]`。
+
+因此当前机制结论可以严格写为：**low-load routing generally reduces interference, while semantic ownership makes
+address specificity significantly more predictive of future update compatibility**。这不是梯度余弦的直接测量；论文仍需
+补一个小规模 per-example gradient agreement probe，避免把 target posterior compatibility 等同于完整优化动力学。
+
 ## 7. 统计与成功门槛
 
 - 主结果 3 seeds，报告 mean ± sample std；
