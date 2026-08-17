@@ -274,7 +274,41 @@ semantic embedding neighborhood
 4. **实证贡献**：在大规模 lifelong editing、外部 KE benchmark 与干预实验中验证 transfer–interference Pareto；
 5. **系统贡献**：保留动态 OOV semantic encoding + persistent cache + offload，并如实报告冷/热路径成本。
 
-## 10. Reviewer 视角的主要风险
+## 10. 新颖性边界与 Related Work 审计（2026-08-18）
+
+论文不能笼统声称“首次改造 Engram hash”或“首次处理 hash collision”。截至当前公开工作的边界如下：
+
+- **原始 Engram** 使用 tokenizer compression、multi-head arithmetic hash 与 context-aware gate；它没有语义地址，
+  也没有用 bucket occupancy 决定读取哪些 hash heads。
+- **Engram-Nine** 用 MPHF 给高频 n-gram 增加 collision-free hot tier，结论是消除碰撞并不稳定改善性能，且指出
+  gating credit assignment 可能比索引精度更关键。我们的假设不是“碰撞越少越好”，而是 semantic address
+  产生的候选碰撞具有不同可靠性，应保留共享并选择性读取；`bottom-specific` 和 interaction 实验必须证明这一区别。
+- **Tokenizer-Agnostic Engram Module**（arXiv:2607.29065）把 token n-gram 改为 byte-equivalent sequence，并用
+  polynomial hash 获得跨 tokenizer 的地址等价性。它解决的是 tokenizer portability，不使用 semantic embedding、
+  residual quantization、bucket-load reliability 或 lifelong editing。它与本工作的共同点仅是都修改了地址层。
+- **Semantic-ID / RQ 工作**主要位于生成式推荐与检索，已经研究 code collision、动态 code 长度及 tail-item
+  generalization。因此“RQ 能产生 semantic IDs”本身不是贡献；本工作的 NLP 新意必须来自：RQ code 作为可 offload
+  的 Engram memory addresses、地址诱导的参数共享、以及由 train-only collision statistics 控制的 parameter-matched
+  readout。
+- **HashedNets / hash embeddings**早已把碰撞视为参数共享或压缩机制。因此论文不能把“bucket load”包装成全新概念；
+  贡献是它在 semantic conditional memory 中作为无需训练 router 的可靠性信号，并通过完整 2×2 因果实验验证。
+
+当前检索没有发现与“frozen semantic RQ Engram addresses + per-query occupancy-based head selection + mass-preserving
+readout + lifelong knowledge-update evaluation”同构的方法，但这只是截至检索日期的公开文献审计，不是绝对无人做过的
+证明。投稿前必须再次检索 arXiv/OpenReview，并把上述四个组成部分逐项对比，而不是依赖标题关键词。
+
+### 10.1 可证伪的新颖性门槛
+
+如果最终只观察到 `Semantic-RQ > Arithmetic`，而 collision-aware 相对 Semantic-flatten 的 interaction 不稳定，
+那么工作最多是一个 semantic-address engineering follow-up，方法贡献不足以支撑 ICLR 主会。只有同时满足以下条件，
+才能保留当前论文定位：
+
+1. collision-aware 的收益在 50K/官方多时间步与至少一个外部 benchmark 上复现；
+2. shuffled、random-k、bottom-specific 排除普通稀疏化和幅值缩放解释；
+3. bucket load 能在 query level 预测 transfer/interference，并由干预实验支持；
+4. 动态 OOV 冷路径、cache 热路径和 offload 成本可测量，证明方法没有悄悄放弃 Engram 的系统属性。
+
+## 11. Reviewer 视角的主要风险
 
 - **“只是 heuristic top-k”**：必须用 interaction、bottom/random intervention 和 load–error 分析证明 specificity 是地址
   可靠性，而非任意剪枝。
