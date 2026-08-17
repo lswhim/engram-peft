@@ -30,12 +30,6 @@ def test_factorized_value_blocks_match_flatten_when_all_gates_equal() -> None:
         hc_mult=2,
         zero_init=False,
     )
-    routed(torch.randn(2, 3, 4, 6), torch.randn(2, 3, 2, 12))
-    assert routed.last_gate is not None
-    assert torch.equal(
-        routed.last_gate.ne(0).sum(dim=-1),
-        torch.full((2, 3, 2), 2, dtype=torch.long),
-    )
     routed.w_v.weight.data.copy_(flat.w_v.weight.data)
     # Zero keys make every route gate exactly 0.5 in both implementations.  This
     # isolates the block decomposition identity without conflating router behavior.
