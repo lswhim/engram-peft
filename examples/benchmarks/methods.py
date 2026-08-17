@@ -17,6 +17,7 @@ from transformers import (
     Trainer,
     TrainerCallback,
     TrainingArguments,
+    set_seed,
 )
 
 from engram_peft import (
@@ -209,6 +210,12 @@ def train_engram(
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+    # Loading a fully materialized pretrained backbone may leave the RNG in the
+    # same state across independent processes.  Reseed immediately before adapter
+    # construction so paper "seeds" genuinely change Engram initialization while
+    # chronological data order and semantic addresses remain fixed.
+    set_seed(int(args.seed))
+
     config = EngramConfig(
         n_head_per_ngram=16,
         target_layers=[11, 21],
@@ -221,6 +228,7 @@ def train_engram(
         else None,
         pad_id=tokenizer.pad_token_id if isinstance(tokenizer.pad_token_id, int) else 0,
         learning_rate_multiplier=15.0,
+        seed=int(args.seed),
     )
     # Apply overrides to engram config
     for k, v in overrides.items():
