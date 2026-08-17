@@ -7,6 +7,7 @@ from typing import Any, cast, override
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim.optimizer import Optimizer
 from transformers import Trainer
 from transformers.modeling_utils import unwrap_model
@@ -90,6 +91,7 @@ class EngramTrainer(Trainer):
     _initial_weights: dict[int, torch.Tensor]
     _last_ce_loss: float
     _last_entropy_loss: float
+    _last_credit_loss: float
     optimizer: Optimizer | None = None
     lr_scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
 
@@ -105,6 +107,7 @@ class EngramTrainer(Trainer):
         # Metrics for Fair Comparison
         self._last_ce_loss = 0.0
         self._last_entropy_loss = 0.0
+        self._last_credit_loss = 0.0
 
         if self.model is not None:
             self._handle_initial_freezing()
@@ -253,6 +256,7 @@ class EngramTrainer(Trainer):
         unwrapped = unwrap_model(model)
         total_loss = ce_loss
         self._last_entropy_loss = 0.0
+        self._last_credit_loss = 0.0
 
         if isinstance(unwrapped, EngramModel):
             alpha = float(
@@ -270,6 +274,16 @@ class EngramTrainer(Trainer):
                     # In evaluation, we return the pure CE loss for fair baseline comparison
                     total_loss = ce_loss
 
+            credit_weight = float(
+                get_config_attr(unwrapped.config, "credit_loss_weight") or 0.0
+            )
+            if model.training and credit_weight > 0:
+                credit_loss = self._compute_counterfactual_credit_loss(
+                    model, unwrapped, inputs
+                )
+                total_loss = total_loss + credit_weight * credit_loss
+                self._last_credit_loss = (credit_weight * credit_loss).item()
+
         if return_outputs:
             if not isinstance(ce_outputs, dict):
                 # Fallback for older transformers or unexpected return types
@@ -277,6 +291,116 @@ class EngramTrainer(Trainer):
             return (total_loss, as_dict(ce_outputs))
 
         return total_loss
+
+    def _compute_counterfactual_credit_loss(
+        self,
+        model: nn.Module,
+        unwrapped: EngramModel,
+        inputs: dict[str, Any],
+    ) -> torch.Tensor:
+        """Teach the head router from two equal-budget counterfactual routes.
+
+        The utility target is detached token NLL.  Gradients flow only through the
+        route scores, avoiding a second language-model objective while directly
+        addressing the route credit-assignment mismatch.
+        """
+        if get_config_attr(unwrapped.config, "memory_fusion") != "head_factorized":
+            raise ValueError(
+                "credit_loss_weight > 0 requires memory_fusion='head_factorized'"
+            )
+        labels = inputs.get("labels")
+        if not isinstance(labels, torch.Tensor) or labels.dim() != 2:
+            raise ValueError("counterfactual credit requires 2D causal-LM labels")
+        batch_size = labels.shape[0]
+        fraction = float(
+            get_config_attr(unwrapped.config, "credit_pair_fraction") or 0.0
+        )
+        pair_count = min(batch_size, max(1, int(round(batch_size * fraction))))
+        selected = torch.randperm(batch_size, device=labels.device)[:pair_count]
+
+        route_logits = unwrapped.get_head_route_logits()
+        if not route_logits:
+            raise RuntimeError(
+                "head-factorized router produced no logits during the primary forward"
+            )
+        num_heads = int(route_logits[0].shape[-1])
+        route_k = int(get_config_attr(unwrapped.config, "credit_route_k") or 0)
+        if not 0 < route_k < num_heads:
+            raise ValueError(
+                f"credit_route_k must be in [1, {num_heads - 1}], got {route_k}"
+            )
+
+        # Route B preferentially uses heads not in A when capacity permits, maximizing
+        # information in the equal-compute comparison without changing route size.
+        random_a = torch.rand(pair_count, num_heads, device=labels.device)
+        index_a = random_a.topk(route_k, dim=-1).indices
+        mask_a = torch.zeros_like(random_a).scatter_(-1, index_a, 1.0)
+        random_b = torch.rand(pair_count, num_heads, device=labels.device)
+        if num_heads >= 2 * route_k:
+            random_b = random_b.masked_fill(mask_a.bool(), -1.0)
+        index_b = random_b.topk(route_k, dim=-1).indices
+        mask_b = torch.zeros_like(random_b).scatter_(-1, index_b, 1.0)
+        route_mask = torch.cat([mask_a, mask_b], dim=0)
+
+        pair_inputs: dict[str, Any] = {}
+        for name, value in inputs.items():
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dim() > 0
+                and value.shape[0] == batch_size
+            ):
+                subset = value.index_select(0, selected)
+                pair_inputs[name] = torch.cat([subset, subset], dim=0)
+            else:
+                pair_inputs[name] = value
+
+        unwrapped.set_forced_head_mask(route_mask)
+        try:
+            pair_outputs = model(**pair_inputs)
+            pair_route_logits = unwrapped.get_head_route_logits()
+        finally:
+            unwrapped.set_forced_head_mask(None)
+        output_logits = getattr(pair_outputs, "logits", None)
+        if output_logits is None and isinstance(pair_outputs, dict):
+            output_logits = pair_outputs.get("logits")
+        if not isinstance(output_logits, torch.Tensor):
+            raise RuntimeError("counterfactual forward did not return logits")
+
+        pair_labels = pair_inputs["labels"]
+        shifted_logits = output_logits[:, :-1, :].float()
+        shifted_labels = pair_labels[:, 1:]
+        token_loss = F.cross_entropy(
+            shifted_logits.reshape(-1, shifted_logits.shape[-1]),
+            shifted_labels.reshape(-1),
+            reduction="none",
+            ignore_index=-100,
+        ).view(shifted_labels.shape)
+        valid = shifted_labels.ne(-100)
+        example_loss = (token_loss * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1)
+
+        route_scores: list[torch.Tensor] = []
+        for logits in pair_route_logits:
+            # Router position t affects the representation used to predict label t+1.
+            per_position = (
+                logits[:, :-1, :, :] * route_mask[:, None, None, :]
+            ).sum(dim=-1) / route_k
+            per_position = per_position.mean(dim=2)
+            score = (per_position * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1)
+            route_scores.append(score)
+        if not route_scores:
+            raise RuntimeError("counterfactual forward produced no route scores")
+        route_score = torch.stack(route_scores).mean(dim=0)
+
+        loss_a, loss_b = example_loss[:pair_count], example_loss[pair_count:]
+        score_a, score_b = route_score[:pair_count], route_score[pair_count:]
+        temperature = float(
+            get_config_attr(unwrapped.config, "credit_temperature") or 1.0
+        )
+        temperature = max(temperature, 1e-6)
+        preference = torch.sigmoid((loss_b - loss_a).detach() / temperature)
+        return F.binary_cross_entropy_with_logits(
+            (score_a - score_b) / temperature, preference
+        )
 
     def _compute_total_norm(
         self, parameters: Iterable[nn.Parameter]
@@ -408,6 +532,7 @@ class EngramTrainer(Trainer):
             model_telemetry_stats=model_stats,
             last_ce_loss=self._last_ce_loss,
             last_entropy_loss=self._last_entropy_loss,
+            last_credit_loss=self._last_credit_loss,
         )
 
     @override

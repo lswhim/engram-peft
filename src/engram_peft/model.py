@@ -16,7 +16,7 @@ from engram_peft.compression import CompressedTokenizer
 from engram_peft.config import EngramConfig
 from engram_peft.discovery import ArchitectureResolver
 from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
-from engram_peft.layer import EngramLayer
+from engram_peft.layer import EngramLayer, HeadFactorizedGating
 from engram_peft.rq_hashing import RQNgramMapping
 from engram_peft.types import (
     EngramModelProtocol,
@@ -346,6 +346,25 @@ class EngramModel(nn.Module, GenerationMixin):
             return torch.tensor(0.0, device=next(self.parameters()).device)
 
         return torch.stack(entropies).mean()
+
+    def set_forced_head_mask(self, mask: torch.Tensor | None) -> None:
+        """Apply one counterfactual route mask to all factorized Engram layers."""
+        for _, layer in self.engram_layers.items():
+            if isinstance(layer, EngramLayer) and isinstance(
+                layer.gating, HeadFactorizedGating
+            ):
+                layer.gating.set_forced_head_mask(mask)
+
+    def get_head_route_logits(self) -> list[torch.Tensor]:
+        """Return route logits from the most recent forward, ordered by target layer."""
+        logits: list[torch.Tensor] = []
+        for _, layer in self.engram_layers.items():
+            if isinstance(layer, EngramLayer) and isinstance(
+                layer.gating, HeadFactorizedGating
+            ):
+                if layer.gating.last_route_logits is not None:
+                    logits.append(layer.gating.last_route_logits)
+        return logits
 
     @property
     def device(self) -> torch.device:

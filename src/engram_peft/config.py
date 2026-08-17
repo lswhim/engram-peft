@@ -187,6 +187,47 @@ class EngramConfig(PreTrainedConfig):
         default=0.0,
         metadata={"help": "Weight for the gating entropy penalty loss."},
     )
+    memory_fusion: str = field(
+        default="flatten",
+        metadata={
+            "help": "Memory fusion: 'flatten' reproduces Engram; "
+            "'head_factorized' assigns independent utility gates to matched-parameter head blocks."
+        },
+    )
+    head_router_top_k: int = field(
+        default=0,
+        metadata={
+            "help": "For head_factorized fusion, keep the top-k heads per token/branch. "
+            "0 keeps all heads with soft gates."
+        },
+    )
+    head_router_use_null: bool = field(
+        default=False,
+        metadata={
+            "help": "Allow an explicit no-memory route when every head logit is below "
+            "head_router_null_threshold."
+        },
+    )
+    head_router_null_threshold: float = field(
+        default=0.0,
+        metadata={"help": "Fixed logit threshold for the no-memory route."},
+    )
+    credit_loss_weight: float = field(
+        default=0.0,
+        metadata={"help": "Weight of counterfactual equal-budget route preference loss."},
+    )
+    credit_pair_fraction: float = field(
+        default=0.5,
+        metadata={"help": "Fraction of each training batch used for route-pair credit."},
+    )
+    credit_route_k: int = field(
+        default=4,
+        metadata={"help": "Number of active memory heads in each counterfactual route."},
+    )
+    credit_temperature: float = field(
+        default=1.0,
+        metadata={"help": "Temperature for route-utility preference calibration."},
+    )
     backbone_freeze_steps: int = field(
         default=0,
         metadata={
@@ -246,6 +287,14 @@ class EngramConfig(PreTrainedConfig):
         clip_grad_per_group: bool = False,
         enable_telemetry: bool = False,
         entropy_loss_weight: float = 0.0,
+        memory_fusion: str = "flatten",
+        head_router_top_k: int = 0,
+        head_router_use_null: bool = False,
+        head_router_null_threshold: float = 0.0,
+        credit_loss_weight: float = 0.0,
+        credit_pair_fraction: float = 0.5,
+        credit_route_k: int = 4,
+        credit_temperature: float = 1.0,
         backbone_freeze_steps: int = 0,
         engram_dtype: str | None = None,
         use_sparse_embeddings: bool = True,
@@ -287,6 +336,14 @@ class EngramConfig(PreTrainedConfig):
         self.clip_grad_per_group = clip_grad_per_group
         self.enable_telemetry = enable_telemetry
         self.entropy_loss_weight = entropy_loss_weight
+        self.memory_fusion = memory_fusion
+        self.head_router_top_k = head_router_top_k
+        self.head_router_use_null = head_router_use_null
+        self.head_router_null_threshold = head_router_null_threshold
+        self.credit_loss_weight = credit_loss_weight
+        self.credit_pair_fraction = credit_pair_fraction
+        self.credit_route_k = credit_route_k
+        self.credit_temperature = credit_temperature
         self.backbone_freeze_steps = backbone_freeze_steps
         self.engram_dtype = engram_dtype
         self.use_sparse_embeddings = use_sparse_embeddings

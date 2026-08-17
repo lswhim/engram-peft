@@ -244,6 +244,144 @@ class ContextAwareGating(nn.Module):
 
 
 @final
+class HeadFactorizedGating(nn.Module):
+    """Parameter-matched per-head alternative to flattened Engram gating.
+
+    ``w_v`` and every ``w_k`` have exactly the same shapes as the original
+    :class:`ContextAwareGating`.  Their input dimensions are interpreted as contiguous
+    head blocks, so ``W @ concat(e_h) == sum_h W_h @ e_h``.  This exposes one route
+    score per memory head without adding a second value network.
+    """
+
+    def __init__(
+        self,
+        config: EngramConfig,
+        num_heads: int,
+        embedding_dim_per_head: int,
+        hidden_size: int,
+        hc_mult: int = 4,
+        zero_init: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.config = config
+        self.num_heads = num_heads
+        self.embedding_dim_per_head = embedding_dim_per_head
+        self.engram_hidden_size = num_heads * embedding_dim_per_head
+        self.hidden_size = hidden_size
+        self.hc_mult = hc_mult
+
+        self.w_v = nn.Linear(self.engram_hidden_size, hidden_size, bias=False)
+        if zero_init:
+            nn.init.zeros_(self.w_v.weight)
+        self.w_k = nn.ModuleList(
+            [
+                nn.Linear(self.engram_hidden_size, hidden_size, bias=False)
+                for _ in range(hc_mult)
+            ]
+        )
+        self.norm_h = nn.ModuleList([nn.RMSNorm(hidden_size) for _ in range(hc_mult)])
+        self.norm_k = nn.ModuleList([nn.RMSNorm(hidden_size) for _ in range(hc_mult)])
+        self.last_gate: torch.Tensor | None = None
+        self.last_route_logits: torch.Tensor | None = None
+        self.last_entropy = 0.0
+        self.gating_entropy = torch.tensor(0.0)
+        self.forced_head_mask: torch.Tensor | None = None
+
+    def set_forced_head_mask(self, mask: torch.Tensor | None) -> None:
+        """Force a route for counterfactual training.
+
+        Accepted shapes are ``[B,H]``, ``[B,L,H]``, or ``[B,L,M,H]`` and are
+        broadcast to the computed route tensor.  A zero mask is the explicit null route.
+        """
+        self.forced_head_mask = mask
+
+    def _expanded_mask(self, gate: torch.Tensor) -> torch.Tensor | None:
+        mask = self.forced_head_mask
+        if mask is None:
+            return None
+        mask = mask.to(device=gate.device, dtype=gate.dtype)
+        if mask.dim() == 2:
+            mask = mask[:, None, None, :]
+        elif mask.dim() == 3:
+            mask = mask[:, :, None, :]
+        if mask.dim() != 4 or mask.shape[0] != gate.shape[0] or mask.shape[-1] != gate.shape[-1]:
+            raise ValueError(
+                "forced head mask must be [B,H], [B,L,H], or [B,L,M,H] "
+                f"for gate shape {tuple(gate.shape)}; got {tuple(mask.shape)}"
+            )
+        return mask
+
+    @override
+    def forward(
+        self,
+        embeddings: Float[torch.Tensor, "batch seq heads head_dim"],
+        hidden_states: Float[torch.Tensor, "batch seq hc_mult hidden_dim"],
+    ) -> Float[torch.Tensor, "batch seq hc_mult hidden_dim"]:
+        if embeddings.shape[-2:] != (
+            self.num_heads,
+            self.embedding_dim_per_head,
+        ):
+            raise ValueError(
+                "head-factorized embeddings have incompatible shape: "
+                f"expected (..., {self.num_heads}, {self.embedding_dim_per_head}), "
+                f"got {tuple(embeddings.shape)}"
+            )
+
+        value_blocks = self.w_v.weight.view(
+            self.hidden_size, self.num_heads, self.embedding_dim_per_head
+        )
+        # [B,L,H,E] x [D,H,E] -> [B,L,H,D]
+        values = torch.einsum("blhe,dhe->blhd", embeddings, value_blocks)
+
+        branch_logits: list[torch.Tensor] = []
+        for branch in range(self.hc_mult):
+            key_blocks = self.w_k[branch].weight.view(
+                self.hidden_size, self.num_heads, self.embedding_dim_per_head
+            )
+            keys = torch.einsum("blhe,dhe->blhd", embeddings, key_blocks)
+            normed_keys = self.norm_k[branch](keys)
+            query = self.norm_h[branch](hidden_states[:, :, branch, :])
+            score = (normed_keys * query.unsqueeze(2)).sum(dim=-1)
+            score = score / (self.hidden_size**0.5)
+            score = score.abs().clamp_min(1e-6).sqrt() * score.sign()
+            branch_logits.append(score)
+
+        route_logits = torch.stack(branch_logits, dim=2)  # [B,L,M,H]
+        gate = route_logits.sigmoid()
+
+        forced_mask = self._expanded_mask(gate)
+        if forced_mask is not None:
+            gate = gate * forced_mask
+        else:
+            top_k = int(getattr(self.config, "head_router_top_k", 0) or 0)
+            if 0 < top_k < self.num_heads:
+                indices = route_logits.topk(top_k, dim=-1).indices
+                hard_mask = torch.zeros_like(gate).scatter_(-1, indices, 1.0)
+                gate = gate * hard_mask
+            if bool(getattr(self.config, "head_router_use_null", False)):
+                threshold = float(
+                    getattr(self.config, "head_router_null_threshold", 0.0) or 0.0
+                )
+                use_memory = route_logits.amax(dim=-1, keepdim=True) > threshold
+                gate = gate * use_memory.to(gate.dtype)
+
+        self.last_route_logits = route_logits
+        self.last_gate = gate.detach()
+        probability = route_logits.sigmoid().clamp(1e-6, 1 - 1e-6)
+        self.gating_entropy = -(
+            probability * probability.log()
+            + (1 - probability) * (1 - probability).log()
+        ).mean()
+        if self.config.enable_telemetry:
+            self.last_entropy = self.gating_entropy.item()
+
+        # One independently gated contribution per head, summed without changing the
+        # downstream ShortConv interface [B,L,M,D].
+        return torch.einsum("blmh,blhd->blmd", gate, values)
+
+
+@final
 class MultiHeadEmbedding(nn.Module):
     """
     Concatenated embedding table for all hash heads across all N-gram sizes.
@@ -318,7 +456,7 @@ class EngramLayer(nn.Module):
     embedding_dim_per_head: int
     hash_mapping: FixedNgramHashMapping | NgramHashMapping
     multi_head_embedding: MultiHeadEmbedding
-    gating: ContextAwareGating
+    gating: ContextAwareGating | HeadFactorizedGating
     short_conv: ShortConv
     rq_multi_head_embedding: MultiHeadEmbedding | None
     arith_multi_head_embedding: MultiHeadEmbedding | None
@@ -479,13 +617,28 @@ class EngramLayer(nn.Module):
             )
 
             # 2. Context-Aware Gating
-            self.gating = ContextAwareGating(
-                config=config,
-                engram_hidden_size=self.total_embedding_dim,
-                hidden_size=self.hidden_dim,
-                hc_mult=self.num_branches,
-                zero_init=config.gating_zero_init,
-            )
+            if config.memory_fusion == "flatten":
+                self.gating = ContextAwareGating(
+                    config=config,
+                    engram_hidden_size=self.total_embedding_dim,
+                    hidden_size=self.hidden_dim,
+                    hc_mult=self.num_branches,
+                    zero_init=config.gating_zero_init,
+                )
+            elif config.memory_fusion == "head_factorized":
+                self.gating = HeadFactorizedGating(
+                    config=config,
+                    num_heads=len(primes),
+                    embedding_dim_per_head=self.embedding_dim_per_head,
+                    hidden_size=self.hidden_dim,
+                    hc_mult=self.num_branches,
+                    zero_init=config.gating_zero_init,
+                )
+            else:
+                raise ValueError(
+                    "memory_fusion must be 'flatten' or 'head_factorized', "
+                    f"got {config.memory_fusion!r}"
+                )
 
             # 3. ShortConv
             self.short_conv = ShortConv(
@@ -613,9 +766,13 @@ class EngramLayer(nn.Module):
             return (hidden_states + y).to(hidden_states.dtype)
 
         # Step 4: Context-Aware Gating modulation
-        # Step 1: Retrieve vectors from MultiHeadEmbedding and flatten
+        # Step 1: Retrieve vectors.  The reference fusion flattens heads; CREDIT keeps
+        # the head axis to expose independently routable, parameter-matched blocks.
         all_embeddings = self.multi_head_embedding(engram_hash_indices)
-        e_t = all_embeddings.flatten(start_dim=-2).to(hidden_states.device)
+        if isinstance(self.gating, HeadFactorizedGating):
+            e_t = all_embeddings.to(hidden_states.device)
+        else:
+            e_t = all_embeddings.flatten(start_dim=-2).to(hidden_states.device)
 
         # Step 4: Context-Aware Gating modulation
         # gated_value has shape [B, L, M, D]
