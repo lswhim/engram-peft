@@ -110,7 +110,25 @@ Qwen3-1.7B-Base、Qwen3-Embedding-4B、RQ `M=8/K=16`，chronological 10K writes�
 三个 seed 上 Semantic aware 相对 Semantic flatten 的 generalization 增益分别为 `+1.855/+1.508/+1.595`
 pp，方向一致。
 
-### 4.2 能说与不能说的结论
+### 4.2 WikiBigEdit-50K trajectory：Semantic-flatten 三 seed
+
+同一条 50K chronological trajectory 在 1K/5K/10K/50K 保存 adapter，并在固定历史 cohorts 上完整评测。
+Semantic-RQ + flatten 的 mean ± sample std（%）为：
+
+| Writes | Efficacy | Generalization | Locality | Multi-hop |
+|---:|---:|---:|---:|---:|
+| 1K | 35.254 ± 0.166 | 33.526 ± 0.254 | 33.786 ± 0.134 | 28.250 ± 0.000 |
+| 5K | 50.718 ± 0.028 | 49.861 ± 0.081 | 44.858 ± 0.085 | 37.664 ± 0.172 |
+| 10K | 55.554 ± 0.174 | 54.402 ± 0.009 | 45.102 ± 0.043 | 38.525 ± 0.187 |
+| 50K | **57.235 ± 0.233** | **55.063 ± 0.156** | **47.538 ± 0.151** | **39.537 ± 0.480** |
+
+在当前唯一完成的 matched Arithmetic seed 42 上，Semantic-flatten 的 Efficacy/Generalization 差值从 1K 的
+`+1.213/+2.589` 增至 50K 的 `+3.255/+3.218` pp；50K query-level case-cluster bootstrap 95% CI 分别为
+`[+2.559,+3.951]` 和 `[+2.425,+4.041]` pp。该结果提示 semantic sharing 的相对价值可能随随机 collision
+压力上升而增强，但 Arithmetic 其余 seeds、Shuffled 与 collision-aware 方法尚未齐全，因此目前不能把趋势归因于
+语义几何，也不能报告正式跨 seed 方法差异。
+
+### 4.3 能说与不能说的结论
 
 当前能够支持：
 
