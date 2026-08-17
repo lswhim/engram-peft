@@ -29,11 +29,27 @@ DEFAULT_METHODS = (
 )
 DEFAULT_PAIRS = (
     ("semantic_specificity", "semantic_flatten"),
+    ("shuffled_specificity", "shuffled_flatten"),
+    ("loadmatched_specificity", "loadmatched_flatten"),
     ("semantic_specificity", "shuffled_specificity"),
     ("semantic_specificity", "loadmatched_specificity"),
     ("semantic_flatten", "shuffled_flatten"),
     ("semantic_flatten", "loadmatched_flatten"),
     ("semantic_flatten", "arithmetic"),
+)
+DEFAULT_INTERACTIONS = (
+    (
+        "semantic_specificity",
+        "semantic_flatten",
+        "shuffled_specificity",
+        "shuffled_flatten",
+    ),
+    (
+        "semantic_specificity",
+        "semantic_flatten",
+        "loadmatched_specificity",
+        "loadmatched_flatten",
+    ),
 )
 
 
@@ -79,6 +95,27 @@ def paired_case_deltas(left: Path, right: Path, axis: str) -> dict[str, float]:
     if not common:
         raise ValueError(f"no paired {axis} cases for {left} and {right}")
     return {case_id: left_scores[case_id] - right_scores[case_id] for case_id in common}
+
+
+def interaction_case_deltas(
+    semantic_aware: Path,
+    semantic_flat: Path,
+    control_aware: Path,
+    control_flat: Path,
+    axis: str,
+) -> dict[str, float]:
+    scores = [
+        load_case_scores(path, axis)
+        for path in (semantic_aware, semantic_flat, control_aware, control_flat)
+    ]
+    common = set(scores[0]).intersection(*(set(values) for values in scores[1:]))
+    if not common:
+        raise ValueError(f"no four-way paired {axis} cases")
+    return {
+        case_id: (scores[0][case_id] - scores[1][case_id])
+        - (scores[2][case_id] - scores[3][case_id])
+        for case_id in sorted(common)
+    }
 
 
 def hierarchical_cluster_bootstrap(
@@ -152,6 +189,44 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 comparisons[name][str(milestone)][axis] = payload
 
+    interactions: dict[str, Any] = {}
+    for semantic_aware, semantic_flat, control_aware, control_flat in DEFAULT_INTERACTIONS:
+        name = (
+            f"{semantic_aware}_minus_{semantic_flat}__minus__"
+            f"{control_aware}_minus_{control_flat}"
+        )
+        interactions[name] = {}
+        for milestone in args.milestones:
+            interactions[name][str(milestone)] = {}
+            for axis in AXES:
+                by_seed: dict[int, dict[str, float]] = {}
+                for seed in args.seeds:
+                    paths = [
+                        args.root / method / f"seed_{seed}" / f"at_{milestone}.jsonl"
+                        for method in (
+                            semantic_aware,
+                            semantic_flat,
+                            control_aware,
+                            control_flat,
+                        )
+                    ]
+                    if all(path.is_file() for path in paths):
+                        by_seed[seed] = interaction_case_deltas(*paths, axis)
+                payload: dict[str, Any] = {
+                    "complete": set(by_seed) == expected_seeds,
+                    "seeds": sorted(by_seed),
+                }
+                if by_seed:
+                    mean, low, high, observations = hierarchical_cluster_bootstrap(
+                        by_seed, args.bootstrap_replicates, rng
+                    )
+                    payload.update(
+                        mean=mean,
+                        ci95=[low, high],
+                        paired_seed_cases=observations,
+                    )
+                interactions[name][str(milestone)][axis] = payload
+
     return {
         "protocol": {
             "required_methods": args.methods,
@@ -165,6 +240,7 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
         },
         "aggregates": aggregates,
         "comparisons": comparisons,
+        "interactions": interactions,
     }
 
 
