@@ -46,7 +46,7 @@ def test_semantic_manifest_supports_wikibigedit_qa_format(tmp_path):
         CharacterTokenizer(),
         0,
         1,
-        16,
+        64,
         num_proc=1,
         dataset="semantic_manifest",
         manifest_path=str(path),
