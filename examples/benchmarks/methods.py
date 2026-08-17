@@ -1,5 +1,6 @@
 # pyright: reportUnknownMemberType=none, reportUnknownVariableType=none, reportUnknownArgumentType=none, reportUnknownParameterType=none
 import logging
+import math
 import os
 import shutil
 from typing import Any
@@ -198,6 +199,21 @@ def train_lora(
     return metrics
 
 
+def example_presentations_for_run(
+    *,
+    global_step: int,
+    dataset_size: int,
+    batch_size: int,
+    grad_accum: int,
+    chronological: bool,
+) -> int:
+    """Count examples exactly for a one-pass chronological run with a partial tail."""
+    effective_batch = batch_size * grad_accum
+    if chronological and global_step == math.ceil(dataset_size / effective_batch):
+        return dataset_size
+    return global_step * effective_batch
+
+
 def train_engram(
     base_model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -350,8 +366,12 @@ def train_engram(
         * args.grad_accum
         * args.max_length
     )
-    example_presentations = int(
-        trainer.state.global_step * args.batch_size * args.grad_accum
+    example_presentations = example_presentations_for_run(
+        global_step=int(trainer.state.global_step),
+        dataset_size=len(train_dataset),
+        batch_size=int(args.batch_size),
+        grad_accum=int(args.grad_accum),
+        chronological=bool(getattr(args, "chronological", False)),
     )
     metrics["example_presentations"] = example_presentations
     if len(train_dataset) > 0 and example_presentations % len(train_dataset) == 0:
