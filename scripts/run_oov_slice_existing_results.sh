@@ -14,7 +14,7 @@ for spec in semantic_flatten:42 semantic_flatten:123 semantic_flatten:456 arithm
   method=${spec%%:*}
   seed=${spec##*:}
   input="$RESULT_ROOT/$method/seed_$seed/at_50000.json"
-  output="$RESULT_ROOT/$method/seed_$seed/at_50000_oov_slices.json"
+  output="$RESULT_ROOT/$method/seed_$seed/at_50000_oov_dose.json"
   if [[ ! -f "$input" ]]; then
     echo "WAITING $method seed=$seed"
     continue

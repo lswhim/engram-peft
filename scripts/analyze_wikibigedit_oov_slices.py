@@ -49,6 +49,19 @@ def query_answers(manifest: Path) -> dict[tuple[str, str], str]:
     return answers
 
 
+def oov_bin(fraction: float) -> str:
+    """Fixed, method-independent dynamic-address burden bins."""
+    if fraction == 0.0:
+        return "00_exact"
+    if fraction <= 0.10:
+        return "01_0-10pct"
+    if fraction <= 0.25:
+        return "02_10-25pct"
+    if fraction <= 0.50:
+        return "03_25-50pct"
+    return "04_50-100pct"
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
     groups: dict[str, list[float]] = defaultdict(list)
     for row in rows:
@@ -56,9 +69,12 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
             continue
         axis = str(row["axis"])
         slice_name = str(row["address_slice"])
+        burden = str(row["dynamic_oov_bin"])
         accuracy = float(row["accuracy"])
         groups[f"slice/{slice_name}"].append(accuracy)
         groups[f"axis/{axis}/slice/{slice_name}"].append(accuracy)
+        groups[f"oov_bin/{burden}"].append(accuracy)
+        groups[f"axis/{axis}/oov_bin/{burden}"].append(accuracy)
     return {
         key: {"mean": float(np.mean(values)), "n": len(values)}
         for key, values in sorted(groups.items())
@@ -124,6 +140,12 @@ def main() -> None:
         row["address_slice"] = (
             "offline_all" if total_hits == total_candidates else "dynamic_any"
         )
+        row["dynamic_oov_fraction"] = (
+            (total_candidates - total_hits) / total_candidates
+            if total_candidates
+            else 0.0
+        )
+        row["dynamic_oov_bin"] = oov_bin(row["dynamic_oov_fraction"])
 
     payload = {
         "status": "complete",
@@ -137,6 +159,8 @@ def main() -> None:
             "unit": "query",
             "offline_all": "every valid context n-gram is in the frozen RQ table",
             "dynamic_any": "at least one valid context n-gram requires online embedding-to-RQ",
+            "dynamic_oov_fraction": "missing valid 2/3-gram contexts divided by all valid 2/3-gram contexts",
+            "oov_bins": [0.0, 0.10, 0.25, 0.50, 1.0],
             "score_reused_from": str(samples_path),
             "prompt_format": prompt_format,
         },
