@@ -4,7 +4,7 @@ set -euo pipefail
 GPU_ID="$1"
 MODE="$2"
 SEED="${3:-42}"
-ROOT=/anguszhang-cfs-nj/seokliu_workspace/engram_multilingual
+ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_multilingual}"
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 MANIFEST=data/semantic_memory/wikibigedit_chronological.jsonl
@@ -32,6 +32,18 @@ case "$MODE" in
   semantic_credit)
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_use_null=False,credit_loss_weight=0.5,credit_pair_fraction=0.5,credit_route_k=4,credit_temperature=1.0"
+    ;;
+  semantic_factorized_mass)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_use_null=False,credit_loss_weight=0.0"
+    ;;
+  semantic_credit_mass)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_use_null=False,credit_loss_weight=0.5,credit_pair_fraction=0.5,credit_route_k=4,credit_temperature=1.0"
+    ;;
+  shuffled_credit_mass)
+    TABLE="$SHUFFLED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_use_null=False,credit_loss_weight=0.5,credit_pair_fraction=0.5,credit_route_k=4,credit_temperature=1.0"
     ;;
   shuffled_credit)
     TABLE="$SHUFFLED_TABLE"
@@ -70,4 +82,3 @@ fi
   --engram-weights "$MILESTONE_ROOT/writes_10000" \
   --output "$OUT_ROOT/$MODE/seed_${SEED}/at_10000.json" \
   --batch-size 16 --embed-batch-size 64
-

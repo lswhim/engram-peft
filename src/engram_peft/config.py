@@ -201,6 +201,13 @@ class EngramConfig(PreTrainedConfig):
             "0 keeps all heads with soft gates."
         },
     )
+    head_router_preserve_mass: bool = field(
+        default=False,
+        metadata={
+            "help": "Rescale sparse/forced routes to preserve the all-head gate mass, "
+            "isolating head selection from total memory strength."
+        },
+    )
     head_router_use_null: bool = field(
         default=False,
         metadata={
@@ -289,6 +296,7 @@ class EngramConfig(PreTrainedConfig):
         entropy_loss_weight: float = 0.0,
         memory_fusion: str = "flatten",
         head_router_top_k: int = 0,
+        head_router_preserve_mass: bool = False,
         head_router_use_null: bool = False,
         head_router_null_threshold: float = 0.0,
         credit_loss_weight: float = 0.0,
@@ -338,6 +346,7 @@ class EngramConfig(PreTrainedConfig):
         self.entropy_loss_weight = entropy_loss_weight
         self.memory_fusion = memory_fusion
         self.head_router_top_k = head_router_top_k
+        self.head_router_preserve_mass = head_router_preserve_mass
         self.head_router_use_null = head_router_use_null
         self.head_router_null_threshold = head_router_null_threshold
         self.credit_loss_weight = credit_loss_weight

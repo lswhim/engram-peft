@@ -349,6 +349,7 @@ class HeadFactorizedGating(nn.Module):
 
         route_logits = torch.stack(branch_logits, dim=2)  # [B,L,M,H]
         gate = route_logits.sigmoid()
+        dense_gate = gate
 
         forced_mask = self._expanded_mask(gate)
         if forced_mask is not None:
@@ -365,6 +366,19 @@ class HeadFactorizedGating(nn.Module):
                 )
                 use_memory = route_logits.amax(dim=-1, keepdim=True) > threshold
                 gate = gate * use_memory.to(gate.dtype)
+
+        if bool(getattr(self.config, "head_router_preserve_mass", False)):
+            # Sparse routing must change which heads contribute, not silently reduce
+            # memory strength by k/H. Detaching the normalizer keeps gradients (and
+            # writes) restricted to selected heads. Explicit null routes stay zero.
+            selected_mass = gate.sum(dim=-1, keepdim=True)
+            dense_mass = dense_gate.sum(dim=-1, keepdim=True)
+            scale = torch.where(
+                selected_mass > 0,
+                dense_mass / selected_mass.clamp_min(1e-6),
+                torch.zeros_like(selected_mass),
+            ).detach()
+            gate = gate * scale
 
         self.last_route_logits = route_logits
         self.last_gate = gate.detach()

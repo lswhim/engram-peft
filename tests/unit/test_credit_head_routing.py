@@ -90,6 +90,46 @@ def test_top_k_routes_exactly_requested_number_of_heads() -> None:
     )
 
 
+def test_top_k_can_preserve_dense_gate_mass() -> None:
+    config = make_config(head_router_top_k=2, head_router_preserve_mass=True)
+    routed = HeadFactorizedGating(
+        config,
+        num_heads=4,
+        embedding_dim_per_head=6,
+        hidden_size=12,
+        hc_mult=2,
+        zero_init=False,
+    )
+    routed(torch.randn(2, 3, 4, 6), torch.randn(2, 3, 2, 12))
+    assert routed.last_route_logits is not None
+    assert routed.last_gate is not None
+    dense_mass = routed.last_route_logits.sigmoid().sum(dim=-1)
+    sparse_mass = routed.last_gate.sum(dim=-1)
+    torch.testing.assert_close(sparse_mass, dense_mass)
+    assert torch.all(routed.last_gate.ne(0).sum(dim=-1) == 2)
+
+
+def test_mass_preservation_leaves_forced_null_route_zero() -> None:
+    config = make_config(head_router_preserve_mass=True)
+    routed = HeadFactorizedGating(
+        config,
+        num_heads=4,
+        embedding_dim_per_head=6,
+        hidden_size=12,
+        hc_mult=2,
+        zero_init=False,
+    )
+    routed.set_forced_head_mask(
+        torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
+    )
+    routed(torch.randn(2, 3, 4, 6), torch.randn(2, 3, 2, 12))
+    assert routed.last_route_logits is not None
+    assert routed.last_gate is not None
+    dense_mass = routed.last_route_logits.sigmoid().sum(dim=-1)
+    torch.testing.assert_close(routed.last_gate[0].sum(dim=-1), dense_mass[0])
+    assert torch.count_nonzero(routed.last_gate[1]) == 0
+
+
 def test_null_route_closes_memory_below_threshold() -> None:
     config = make_config(
         head_router_top_k=2,
@@ -113,6 +153,7 @@ def test_null_route_closes_memory_below_threshold() -> None:
 def test_credit_config_round_trip() -> None:
     config = make_config(
         head_router_top_k=4,
+        head_router_preserve_mass=True,
         head_router_use_null=True,
         head_router_null_threshold=0.2,
         credit_loss_weight=0.2,
@@ -123,6 +164,7 @@ def test_credit_config_round_trip() -> None:
     restored = EngramConfig.from_dict(config.to_dict())
     assert restored.memory_fusion == "head_factorized"
     assert restored.head_router_top_k == 4
+    assert restored.head_router_preserve_mass is True
     assert restored.head_router_use_null is True
     assert restored.head_router_null_threshold == 0.2
     assert restored.credit_loss_weight == 0.2
