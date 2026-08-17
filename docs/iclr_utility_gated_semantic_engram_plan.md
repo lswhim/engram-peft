@@ -194,6 +194,13 @@ generalization 增益没有在首次出现的新 n-gram 上消失。Efficacy 的
 正式报告应给 case-cluster CI，并等待 seed 456。这个切片仍是“query 含任意 OOV”的粗粒度定义；最终还需按
 OOV access ratio 分位数画 dose-response curve，避免少量 OOV 与高 OOV query 被混在一起。
 
+固定边界的 dynamic-OOV access-ratio dose-response 也已完成 seeds 42/123。Generalization 的配对增益在
+`0% / (0,10%] / (10,25%] / (25,50%] / (50,100%]` 五档分别为
+`+2.969 / +3.395 / +3.624 / +1.982 / +2.652` pp，两个 seeds 在每档均同方向。这支持“对不同新地址负担均有
+泛化收益”，但不支持“收益随 OOV 单调增加”。同时，Locality 在最高 OOV 桶为 `-2.026` pp，提示动态地址过多时
+semantic sharing 会增加干扰；这应作为 collision-aware reliability 机制要解决的 failure mode，而不能隐藏在
+aggregate 指标里。正式版本等待第三 seed，并用 case-cluster bootstrap 给每档 CI。
+
 ### 4.4 能说与不能说的结论
 
 当前能够支持：
