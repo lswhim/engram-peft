@@ -6,8 +6,9 @@ ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}"
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 EMBEDDER=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-4B
-MANIFEST=data/semantic_memory/wikibigedit_official_chronological.jsonl
-TABLE=rq_tables/wikibigedit_official502k_qwen3emb4b_M8K16
+MANIFEST=data/semantic_memory/wikibigedit_official_timesteps/wiki_big_edit_20240201_20240220.jsonl
+EXPECTED_CALIBRATION_EDITS=26922
+TABLE=rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16
 SHUFFLED=${TABLE}_runtime_shuffled_seed42
 
 cd "$ROOT"
@@ -16,14 +17,14 @@ export PYTHONPATH="$ROOT/src:$ROOT"
 export HF_HUB_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 
-if [[ "$(wc -l < "$MANIFEST")" -ne 502382 ]]; then
-  echo "official manifest must contain exactly 502382 train edits" >&2
+if [[ "$(wc -l < "$MANIFEST")" -ne "$EXPECTED_CALIBRATION_EDITS" ]]; then
+  echo "official T0 calibration manifest must contain exactly $EXPECTED_CALIBRATION_EDITS edits" >&2
   exit 2
 fi
 
 if [[ ! -f "$TABLE/meta.json" ]]; then
   "$PY" -u scripts/build_rq_table.py \
-    --data_files "$MANIFEST" --text_columns prompt target --num_docs 502382 \
+    --data_files "$MANIFEST" --text_columns prompt target --num_docs "$EXPECTED_CALIBRATION_EDITS" \
     --base_tokenizer "$BASE" --embedder "$EMBEDDER" \
     --num_levels 8 --codebook_size 16 --projection_dim 0 \
     --max_doc_tokens 128 --max_ngrams_per_size 500000 --min_count 1 \
@@ -43,8 +44,8 @@ from pathlib import Path
 import numpy as np
 
 for directory in (
-    Path("rq_tables/wikibigedit_official502k_qwen3emb4b_M8K16"),
-    Path("rq_tables/wikibigedit_official502k_qwen3emb4b_M8K16_runtime_shuffled_seed42"),
+    Path("rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16"),
+    Path("rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16_runtime_shuffled_seed42"),
 ):
     meta = json.loads((directory / "meta.json").read_text())
     print(directory, meta)

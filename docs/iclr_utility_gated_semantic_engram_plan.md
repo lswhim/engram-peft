@@ -238,6 +238,12 @@ aggregate 指标里。
 
 ### 5.1 主实验：WikiBigEdit official lifelong protocol
 
+**时间因果约束：**正式主表的 Qwen3-Embedding-4B → RQ codebook 只允许在第一个时间段
+`wiki_big_edit_20240201_20240220`（26,922 edits）上校准一次，之后永久冻结。后续时间段出现的
+新 n-gram 必须在线执行 frozen embedding → frozen RQ 并写入持久 cache，不能利用未来 timestep
+预先拟合地址几何。使用完整 502,382 条输入拟合的 RQ 只能作为显式标注的 transductive oracle
+ablation，不能作为主结果。
+
 开发阶段固定配置：
 
 ```text
