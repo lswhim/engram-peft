@@ -128,3 +128,21 @@ def test_runtime_shuffle_applies_identically_to_offline_and_lazy_codes(
         original_ids=np.asarray([[11, 19]], dtype=np.int64),
     )[0]
     np.testing.assert_array_equal(actual[0, 1], expected)
+
+
+def test_oov_only_shuffle_keeps_offline_frequency_matched_codes(
+    tmp_path: Path,
+) -> None:
+    table = tmp_path / "table"
+    _table(table)
+    original = np.load(table / "codes_2.npy").astype(np.int64)
+    meta = json.loads((table / "meta.json").read_text())
+    meta["runtime_oov_shuffle_seed"] = 42
+    (table / "meta.json").write_text(json.dumps(meta))
+
+    mapping = RQNgramMapping(str(table), pad_id=0)
+
+    np.testing.assert_array_equal(mapping.codes[2], original)
+    oov = np.asarray([[3, 4]], dtype=np.int64)
+    shuffled = mapping._shuffle_codes(2, oov, oov=True)
+    assert not np.array_equal(shuffled, oov)

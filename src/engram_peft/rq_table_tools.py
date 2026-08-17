@@ -198,6 +198,10 @@ def shuffle_rq_table(
                 else "whole_code_vector_row_permutation"
             ),
             "source_table": str(source_dir),
+            # Offline rows use the exact frequency/load-matched permutation above.
+            # Truly unseen runtime codes still need their semantic ownership removed.
+            "runtime_oov_shuffle_seed": seed,
+            "runtime_oov_shuffle_protocol": "blake2b_joint_code_vector_v1",
         }
     )
     with (output_dir / "meta.json").open("w", encoding="utf-8") as handle:

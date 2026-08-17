@@ -76,6 +76,7 @@ class RQNgramMapping:
         self.num_levels = int(meta["num_levels"])
         self.codebook_size = int(meta["codebook_size"])
         self.runtime_shuffle_seed = meta.get("runtime_shuffle_seed")
+        self.runtime_oov_shuffle_seed = meta.get("runtime_oov_shuffle_seed")
         self.sorted_keys = {}
         self.codes = {}
         for n in self.ngram_sizes:
@@ -116,12 +117,17 @@ class RQNgramMapping:
             k = k * self.base + ngrams[..., j].astype(np.int64)
         return k
 
-    def _shuffle_codes(self, n: int, codes: np.ndarray) -> np.ndarray:
+    def _shuffle_codes(
+        self, n: int, codes: np.ndarray, *, oov: bool = False
+    ) -> np.ndarray:
         """Destroy partial-level RQ geometry with a frozen joint-code mapping."""
-        if self.runtime_shuffle_seed is None:
+        selected_seed = self.runtime_shuffle_seed
+        if oov and self.runtime_oov_shuffle_seed is not None:
+            selected_seed = self.runtime_oov_shuffle_seed
+        if selected_seed is None:
             return codes
         output = np.empty_like(codes, dtype=np.int64)
-        seed = int(self.runtime_shuffle_seed)
+        seed = int(selected_seed)
         for row_index, row in enumerate(codes):
             payload = np.asarray(row, dtype=np.uint32).tobytes()
             digest = hashlib.blake2b(
@@ -221,7 +227,7 @@ class RQNgramMapping:
         codes = np.asarray(
             faiss.unpack_bitstrings(packed, self.num_levels, nbits), dtype=np.int64
         )
-        codes = self._shuffle_codes(n, codes)
+        codes = self._shuffle_codes(n, codes, oov=True)
         self._cache.executemany(
             "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
             [
