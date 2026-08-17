@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import statistics
 from collections import Counter, defaultdict
@@ -273,6 +274,18 @@ def main() -> None:
         "comparisons": comparisons,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    samples_output = args.output.with_suffix(".jsonl")
+    samples_tmp = samples_output.with_suffix(samples_output.suffix + ".tmp")
+    with samples_tmp.open("w", encoding="utf-8") as handle:
+        for case_id in sorted(per_case):
+            values = {
+                group: statistics.mean(per_case[case_id][group])
+                for group in ("top_specific", "bottom_specific", "random_k")
+                if per_case[case_id].get(group)
+            }
+            handle.write(json.dumps({"case_id": case_id, **values}) + "\n")
+    os.replace(samples_tmp, samples_output)
+    payload["samples"] = str(samples_output)
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     temporary.replace(args.output)
