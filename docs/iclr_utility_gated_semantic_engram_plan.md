@@ -85,6 +85,33 @@ m_t=\sum_{j\in\mathcal I_t}a_{t,j}W^V_je_{t,j}.
 方法的核心不是额外 router，而是把 semantic address 中已经存在、却被 flatten 丢弃的**地址可靠性信号**用于
 memory readout。
 
+### 3.4 为什么规模越大越可能显出优势：collision 的 bias–variance 视角
+
+对某个 memory bucket `b`，训练时所有命中它的 n-gram 都会更新同一 value。令 `u_g` 表示 key `g` 对该 value
+产生的归一化更新方向，则查询 `q` 从共享中得到的是：
+
+\[
+\Delta_b(q) \propto \sum_{g\in B_b} w_g\langle u_q,u_g\rangle.
+\]
+
+Arithmetic hash 使 `B_b` 与语义关系近似独立；随着 writes 增多，更多无关更新进入同一 bucket，alignment 的均值
+接近全局背景而方差/抵消增大。Semantic RQ 则提高 paraphrase、同 relation 或相近实体表达落入部分共同 heads 的
+概率，使其中一部分 collision 成为有益参数共享。但 semantic bucket 仍可能因高频、多义或量化边界而混杂，因此
+不是“semantic collision 都好”，而是形成了多个 reliability 不同的候选共享路径。
+
+当前 specificity `-log(1+L)` 是对干扰风险的保守、train-only proxy：它不声称直接测得 gradient alignment，只利用
+在其他条件相同时，更大的 distinct-key load 提供更多无关碰撞机会。RQ 的多 head 结构允许查询在不增加参数的情况下
+选择低风险路径。这一解释给出三个可证伪预测：
+
+1. Semantic-flat 相对 Arithmetic 的优势应随 cumulative writes / collision pressure 增大；
+2. 在相同 access-weighted load 下，Semantic 应优于 code-vector ownership 被置换的 control；
+3. 在 Semantic 地址内，selected low-load heads 的 update-gradient agreement / target entropy 应优于 bottom-load heads，
+   且该差异能预测 query-level generalization gain。
+
+前两个预测由 scaling 与 load-matched 2×2 主表检验；第三个必须通过 gradient/target-conflict probe 与
+bottom-specific intervention 检验。若第三条不成立，论文只能保留“load-aware regularization”结论，不能声称找到了
+semantic collision reliability 的机制。
+
 ## 4. 已有证据与当前结论
 
 ### 4.1 WikiBigEdit-10K 完整三 seed 结果
