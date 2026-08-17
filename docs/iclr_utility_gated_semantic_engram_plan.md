@@ -177,6 +177,23 @@ seed 456、load-matched control 与 collision-aware 方法尚未齐全，因此�
 这一审计不削弱 semantic generalization 的定义，反而使其可检验：若提升只存在于 offline-hit query，方法证明的是
 离线词典共享；只有 dynamic-OOV query 也获得提升，才能支持“新表面形式可由语义地址泛化”的更强 claim。
 
+当前 seeds 42/123 的 50K post-hoc 配对切片已经给出初步正证据。对每个 query，若任意有效 2/3-gram context
+不在冻结 RQ 表中，则标为 `dynamic_any`；否则标为 `offline_all`。Semantic-flatten − Arithmetic（pp）为：
+
+| Axis / address slice | Seed 42 | Seed 123 | Two-seed mean | Queries / seed |
+|---|---:|---:|---:|---:|
+| Generalization / dynamic-any | +3.213 | +3.003 | **+3.108** | 1,797 |
+| Generalization / offline-all | +3.265 | +2.674 | **+2.969** | 203 |
+| Multi-hop / dynamic-any | +1.753 | +1.697 | **+1.725** | 110 |
+| Locality / dynamic-any | +0.309 | +0.558 | **+0.433** | 1,996 |
+| Efficacy / offline-all | +3.321 | +2.555 | **+2.938** | 1,967 |
+| Efficacy / dynamic-any | -0.631 | -0.505 | -0.568 | 33 |
+
+最重要的是，`89.85%` 的 generalization queries 属于 dynamic-any，且两个 seeds 的增益均约 `+3 pp`；因此总体
+generalization 增益没有在首次出现的新 n-gram 上消失。Efficacy 的 dynamic-any 只有 33 条，负差不能稳定外推，
+正式报告应给 case-cluster CI，并等待 seed 456。这个切片仍是“query 含任意 OOV”的粗粒度定义；最终还需按
+OOV access ratio 分位数画 dose-response curve，避免少量 OOV 与高 OOV query 被混在一起。
+
 ### 4.4 能说与不能说的结论
 
 当前能够支持：
