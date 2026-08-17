@@ -118,7 +118,7 @@ def main() -> None:
     if base != int(meta["base"]):
         raise ValueError(f"table base={meta['base']} does not match tokenizer base={base}")
 
-    rows: list[tuple[str, list[int], int]] = []
+    rows: list[tuple[str, list[int], list[int], int]] = []
     with args.manifest.open(encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
@@ -130,9 +130,23 @@ def main() -> None:
             )["input_ids"]
             prompt_ids = prompt_ids[: max(0, args.max_length - len(target_ids))]
             target_ids = target_ids[: args.max_length - len(prompt_ids)]
-            rows.append(
-                (str(case.get("case_id", len(rows))), list(prompt_ids) + list(target_ids), len(prompt_ids))
+            token_ids = list(prompt_ids) + list(target_ids)
+            compressed_ids = list(
+                map(
+                    int,
+                    compressor.map_ids(np.asarray(token_ids, dtype=np.int64)),
+                )
             )
+            rows.append(
+                (
+                    str(case.get("case_id", len(rows))),
+                    token_ids,
+                    compressed_ids,
+                    len(prompt_ids),
+                )
+            )
+            if len(rows) % 5_000 == 0:
+                print(f"[tokenize] {len(rows)}/{args.max_cases}", flush=True)
             if len(rows) >= args.max_cases:
                 break
     if not args.prefix_cases < len(rows):
@@ -142,8 +156,7 @@ def main() -> None:
     global_targets: Counter[int] = Counter()
     skipped_contexts = 0
 
-    def accesses(token_ids: list[int], target_position: int) -> tuple[list[int], list[int]] | None:
-        compressed = list(map(int, compressor.map_ids(np.asarray(token_ids, dtype=np.int64))))
+    def accesses(compressed: list[int], target_position: int) -> tuple[list[int], list[int]] | None:
         context_end = target_position - 1
         head_codes: list[int] = []
         head_loads: list[int] = []
@@ -163,9 +176,11 @@ def main() -> None:
             head_offset += levels
         return head_codes, head_loads
 
-    for _, token_ids, prompt_length in rows[: args.prefix_cases]:
+    for row_index, (_, token_ids, compressed, prompt_length) in enumerate(
+        rows[: args.prefix_cases], start=1
+    ):
         for target_position in range(prompt_length, len(token_ids)):
-            access = accesses(token_ids, target_position)
+            access = accesses(compressed, target_position)
             if access is None:
                 skipped_contexts += 1
                 continue
@@ -174,15 +189,19 @@ def main() -> None:
             global_targets[target] += 1
             for head, code in enumerate(head_codes):
                 bucket_targets[(head, code)][target] += 1
+        if row_index % 5_000 == 0:
+            print(f"[prefix buckets] {row_index}/{args.prefix_cases}", flush=True)
 
     global_total = sum(global_targets.values())
     vocabulary = int(tokenizer.vocab_size)
     per_case: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     group_hits: Counter[str] = Counter()
     group_events: Counter[str] = Counter()
-    for case_index, (case_id, token_ids, prompt_length) in enumerate(rows[args.prefix_cases :], start=args.prefix_cases):
+    for case_index, (case_id, token_ids, compressed, prompt_length) in enumerate(
+        rows[args.prefix_cases :], start=args.prefix_cases
+    ):
         for target_position in range(prompt_length, len(token_ids)):
-            access = accesses(token_ids, target_position)
+            access = accesses(compressed, target_position)
             if access is None:
                 skipped_contexts += 1
                 continue
@@ -201,6 +220,11 @@ def main() -> None:
                     group_hits[group] += int(counts[target] > 0)
                     group_events[group] += 1
                 per_case[case_id][group].append(statistics.mean(surprises))
+        if (case_index + 1 - args.prefix_cases) % 2_000 == 0:
+            print(
+                f"[heldout conflict] {case_index + 1 - args.prefix_cases}/{len(rows) - args.prefix_cases}",
+                flush=True,
+            )
 
     case_means = {
         group: {
