@@ -28,3 +28,6 @@ def test_paired_deltas_keep_case_clusters(tmp_path: Path) -> None:
     assert set(deltas) == {"c0", "c1"}
     assert abs(deltas["c0"] - 0.3) < 1e-12
     assert abs(deltas["c1"] - 0.1) < 1e-12
+
+    dynamic = paired_deltas(left, right, "generalization", "dynamic_any")
+    assert dynamic == deltas

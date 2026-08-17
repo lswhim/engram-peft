@@ -149,12 +149,21 @@ Semantic-RQ + flatten 的 mean ± sample std（%）为：
 | 10K | 55.554 ± 0.174 | 54.402 ± 0.009 | 45.102 ± 0.043 | 38.525 ± 0.187 |
 | 50K | **57.235 ± 0.233** | **55.063 ± 0.156** | **47.538 ± 0.151** | **39.537 ± 0.480** |
 
-在已完成的 matched Arithmetic seeds 42/123 上，50K Semantic-flatten − Arithmetic 的配对均值为：Efficacy
-`+2.880`、Generalization `+3.094`、Locality `+0.432`、Multi-hop `+1.790` pp。以 seed 为外层、case 为内层的
-hierarchical bootstrap 95% CI 分别为 `[+2.176,+3.591]`、`[+2.516,+3.646]`、`[-0.118,+0.965]`、
-`[+0.589,+3.105]`。该结果提示 semantic sharing 的相对价值可能随 collision pressure 上升而增强，但 Arithmetic
-seed 456、load-matched control 与 collision-aware 方法尚未齐全，因此这些仍是 interim 结果，不能提前写成正式
-跨 seed 或语义几何因果结论。
+Arithmetic 三 seeds 已完成。50K Arithmetic 的 Efficacy/Generalization/Locality/Multi-hop 为
+`54.420±0.179 / 52.115±0.187 / 47.055±0.030 / 37.867±0.231`。Semantic-flatten − Arithmetic 的三 seed
+配对效应为：
+
+| Axis | Delta (pp) | Hierarchical paired case-bootstrap 95% CI |
+|---|---:|---:|
+| Efficacy | **+2.815** | **[+2.282, +3.358]** |
+| Generalization | **+2.948** | **[+2.437, +3.451]** |
+| Locality | **+0.483** | **[+0.035, +0.927]** |
+| Multi-hop | **+1.670** | **[+0.604, +2.767]** |
+
+四轴在 50K 的 CI 均不跨零。Scaling 并非严格单调：Semantic 的 Efficacy/Generalization 优势在
+1K/5K/10K/50K 分别为 `+1.221/+2.310`、`+1.647/+1.673`、`+1.677/+2.064`、
+`+2.815/+2.948` pp；但最大规模的效应明显大于 1K，支持 collision pressure 下 semantic sharing 更有价值的
+趋势性预测。严格语义几何归因仍需等待 load-matched control，不能只凭 Arithmetic 对比完成。
 
 ### 4.3 离线表覆盖与动态 OOV 审计
 
@@ -177,29 +186,27 @@ seed 456、load-matched control 与 collision-aware 方法尚未齐全，因此�
 这一审计不削弱 semantic generalization 的定义，反而使其可检验：若提升只存在于 offline-hit query，方法证明的是
 离线词典共享；只有 dynamic-OOV query 也获得提升，才能支持“新表面形式可由语义地址泛化”的更强 claim。
 
-当前 seeds 42/123 的 50K post-hoc 配对切片已经给出初步正证据。对每个 query，若任意有效 2/3-gram context
+50K 三 seed post-hoc 配对切片已经完成。对每个 query，若任意有效 2/3-gram context
 不在冻结 RQ 表中，则标为 `dynamic_any`；否则标为 `offline_all`。Semantic-flatten − Arithmetic（pp）为：
 
-| Axis / address slice | Seed 42 | Seed 123 | Two-seed mean | Queries / seed |
-|---|---:|---:|---:|---:|
-| Generalization / dynamic-any | +3.213 | +3.003 | **+3.108** | 1,797 |
-| Generalization / offline-all | +3.265 | +2.674 | **+2.969** | 203 |
-| Multi-hop / dynamic-any | +1.753 | +1.697 | **+1.725** | 110 |
-| Locality / dynamic-any | +0.309 | +0.558 | **+0.433** | 1,996 |
-| Efficacy / offline-all | +3.321 | +2.555 | **+2.938** | 1,967 |
-| Efficacy / dynamic-any | -0.631 | -0.505 | -0.568 | 33 |
+| Axis / address slice | Three-seed delta (pp) | 95% CI | Queries / seed |
+|---|---:|---:|---:|
+| Generalization / dynamic-any | **+2.970** | 待按合并二元切片导出 | 1,797 |
+| Generalization / offline-all | **+2.750** | **[+1.233,+4.294]** | 203 |
+| Locality / dynamic-any | **+0.484** | 待按合并二元切片导出 | 1,996 |
+| Efficacy / offline-all | **+2.876** | **[+2.337,+3.429]** | 1,967 |
 
-最重要的是，`89.85%` 的 generalization queries 属于 dynamic-any，且两个 seeds 的增益均约 `+3 pp`；因此总体
-generalization 增益没有在首次出现的新 n-gram 上消失。Efficacy 的 dynamic-any 只有 33 条，负差不能稳定外推，
-正式报告应给 case-cluster CI，并等待 seed 456。这个切片仍是“query 含任意 OOV”的粗粒度定义；最终还需按
-OOV access ratio 分位数画 dose-response curve，避免少量 OOV 与高 OOV query 被混在一起。
+最重要的是，`89.85%` 的 generalization queries 属于 dynamic-any，三 seed aggregate 增益约 `+2.97 pp`；因此总体
+generalization 增益没有在首次出现的新 n-gram 上消失。Efficacy 的 dynamic-any 只有 33 条，不能稳定外推。
 
-固定边界的 dynamic-OOV access-ratio dose-response 也已完成 seeds 42/123。Generalization 的配对增益在
+固定边界的 dynamic-OOV access-ratio dose-response 已完成三 seeds。Generalization 的配对增益在
 `0% / (0,10%] / (10,25%] / (25,50%] / (50,100%]` 五档分别为
-`+2.969 / +3.395 / +3.624 / +1.982 / +2.652` pp，两个 seeds 在每档均同方向。这支持“对不同新地址负担均有
-泛化收益”，但不支持“收益随 OOV 单调增加”。同时，Locality 在最高 OOV 桶为 `-2.026` pp，提示动态地址过多时
+`+2.750 / +3.057 / +3.589 / +1.821 / +2.778` pp；对应 95% CI 均不跨零：
+`[+1.233,+4.294] / [+2.023,+4.075] / [+2.818,+4.377] / [+0.931,+2.687] / [+1.010,+4.924]`。
+这支持“对不同新地址负担均有泛化收益”，但不支持“收益随 OOV 单调增加”。同时，Locality 在最高 OOV 桶为
+`-1.851` pp，95% CI `[-3.108,-0.694]`，提示动态地址过多时
 semantic sharing 会增加干扰；这应作为 collision-aware reliability 机制要解决的 failure mode，而不能隐藏在
-aggregate 指标里。正式版本等待第三 seed，并用 case-cluster bootstrap 给每档 CI。
+aggregate 指标里。
 
 ### 4.4 能说与不能说的结论
 

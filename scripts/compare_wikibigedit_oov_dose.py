@@ -22,6 +22,7 @@ BINS = (
     "03_25-50pct",
     "04_50-100pct",
 )
+GROUPS = BINS + ("dynamic_any",)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,7 +45,13 @@ def load_case_scores(path: Path, axis: str, burden: str) -> dict[str, float]:
             if (
                 row.get("eligible")
                 and row.get("axis") == axis
-                and row.get("dynamic_oov_bin") == burden
+                and (
+                    row.get("dynamic_oov_bin") == burden
+                    or (
+                        burden == "dynamic_any"
+                        and row.get("dynamic_oov_bin") != "00_exact"
+                    )
+                )
             ):
                 grouped[str(row["case_id"])].append(float(row["accuracy"]))
     return {
@@ -69,7 +76,7 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
     results: dict[str, Any] = {}
     for axis in AXES:
         results[axis] = {}
-        for burden in BINS:
+        for burden in GROUPS:
             by_seed: dict[int, dict[str, float]] = {}
             for seed in args.seeds:
                 left = args.root / args.left / f"seed_{seed}" / "at_50000_oov_dose.jsonl"

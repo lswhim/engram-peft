@@ -11,6 +11,7 @@ while kill -0 "$WAIT_PID" 2>/dev/null; do
 done
 
 cd "$ROOT"
+export PYTHONPATH=.
 bash scripts/run_oov_slice_existing_results.sh
 "$PY" scripts/analyze_collision_scaling.py \
   --root "$OUT_ROOT" \
