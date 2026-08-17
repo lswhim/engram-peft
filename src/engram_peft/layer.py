@@ -2,6 +2,7 @@
 import os
 from typing import Any, cast, final, override
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,6 +11,7 @@ from jaxtyping import Float, Int64
 from engram_peft.compression import CompressedTokenizer
 from engram_peft.config import EngramConfig
 from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
+from engram_peft.rq_hashing import RQNgramMapping
 from engram_peft.types import jaxtyped
 from engram_peft.utils import safe_from_numpy
 
@@ -317,6 +319,7 @@ class HeadFactorizedGating(nn.Module):
         self,
         embeddings: Float[torch.Tensor, "batch seq heads head_dim"],
         hidden_states: Float[torch.Tensor, "batch seq hc_mult hidden_dim"],
+        head_selection_scores: Float[torch.Tensor, "batch seq heads"] | None = None,
     ) -> Float[torch.Tensor, "batch seq hc_mult hidden_dim"]:
         if embeddings.shape[-2:] != (
             self.num_heads,
@@ -357,7 +360,32 @@ class HeadFactorizedGating(nn.Module):
         else:
             top_k = int(getattr(self.config, "head_router_top_k", 0) or 0)
             if 0 < top_k < self.num_heads:
-                indices = route_logits.topk(top_k, dim=-1).indices
+                selection = str(
+                    getattr(self.config, "head_router_selection", "context")
+                )
+                if selection == "context":
+                    selection_logits = route_logits
+                elif selection == "specificity":
+                    if head_selection_scores is None:
+                        raise ValueError(
+                            "head_router_selection='specificity' requires per-address scores"
+                        )
+                    if head_selection_scores.shape != route_logits.shape[:2] + (
+                        self.num_heads,
+                    ):
+                        raise ValueError(
+                            "head selection scores must be [B,L,H]; got "
+                            f"{tuple(head_selection_scores.shape)}"
+                        )
+                    selection_logits = head_selection_scores.to(
+                        device=route_logits.device, dtype=route_logits.dtype
+                    )[:, :, None, :].expand_as(route_logits)
+                else:
+                    raise ValueError(
+                        "head_router_selection must be 'context' or 'specificity', "
+                        f"got {selection!r}"
+                    )
+                indices = selection_logits.topk(top_k, dim=-1).indices
                 hard_mask = torch.zeros_like(gate).scatter_(-1, indices, 1.0)
                 gate = gate * hard_mask
             if bool(getattr(self.config, "head_router_use_null", False)):
@@ -553,6 +581,7 @@ class EngramLayer(nn.Module):
         self.rq_short_conv = None
         self.arith_short_conv = None
         self.fusion_gate = None
+        self.register_buffer("rq_bucket_specificity", None, persistent=False)
 
         if config.hash_backend == "mixed_v2":
             n_sizes = len(self.ngram_sizes)
@@ -648,6 +677,36 @@ class EngramLayer(nn.Module):
                     hc_mult=self.num_branches,
                     zero_init=config.gating_zero_init,
                 )
+                if config.head_router_selection == "specificity":
+                    if config.hash_backend != "rq":
+                        raise ValueError(
+                            "specificity head selection currently requires hash_backend='rq'"
+                        )
+                    if not config.rq_table_dir:
+                        raise ValueError(
+                            "specificity head selection requires rq_table_dir"
+                        )
+                    rq_mapping = RQNgramMapping(config.rq_table_dir)
+                    rows: list[np.ndarray] = []
+                    for n in rq_mapping.ngram_sizes:
+                        codes = rq_mapping.codes[n]
+                        for level in range(rq_mapping.num_levels):
+                            counts = np.bincount(
+                                codes[:, level], minlength=rq_mapping.codebook_size
+                            ).astype(np.float32)
+                            # Distinct n-grams per bucket measure collision load. The
+                            # per-head z-score makes levels comparable without using
+                            # any downstream labels or evaluation examples.
+                            score = -np.log1p(counts)
+                            score = (score - score.mean()) / (score.std() + 1e-6)
+                            rows.append(score)
+                    specificity = torch.from_numpy(np.stack(rows)).float()
+                    if specificity.shape != (len(primes), max(primes)):
+                        raise ValueError(
+                            "RQ specificity table shape does not match memory heads: "
+                            f"{tuple(specificity.shape)} vs {(len(primes), max(primes))}"
+                        )
+                    self.rq_bucket_specificity = specificity
             else:
                 raise ValueError(
                     "memory_fusion must be 'flatten' or 'head_factorized', "
@@ -783,14 +842,28 @@ class EngramLayer(nn.Module):
         # Step 1: Retrieve vectors.  The reference fusion flattens heads; CREDIT keeps
         # the head axis to expose independently routable, parameter-matched blocks.
         all_embeddings = self.multi_head_embedding(engram_hash_indices)
+        selection_scores = None
         if isinstance(self.gating, HeadFactorizedGating):
             e_t = all_embeddings.to(hidden_states.device)
+            if self.rq_bucket_specificity is not None:
+                score_table = self.rq_bucket_specificity.to(
+                    device=engram_hash_indices.device
+                )
+                head_ids = torch.arange(
+                    engram_hash_indices.shape[-1], device=engram_hash_indices.device
+                ).view(1, 1, -1)
+                selection_scores = score_table[head_ids, engram_hash_indices]
         else:
             e_t = all_embeddings.flatten(start_dim=-2).to(hidden_states.device)
 
         # Step 4: Context-Aware Gating modulation
         # gated_value has shape [B, L, M, D]
-        gated_value = self.gating(e_t, hidden_states_m)
+        if isinstance(self.gating, HeadFactorizedGating):
+            gated_value = self.gating(
+                e_t, hidden_states_m, head_selection_scores=selection_scores
+            )
+        else:
+            gated_value = self.gating(e_t, hidden_states_m)
 
         # Step 5: ShortConv module
         # y has shape [B, L, M, D]

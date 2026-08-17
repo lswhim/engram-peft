@@ -49,6 +49,14 @@ case "$MODE" in
     TABLE="$SHUFFLED_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_use_null=False,credit_loss_weight=0.5,credit_pair_fraction=0.5,credit_route_k=4,credit_temperature=1.0"
     ;;
+  semantic_specificity)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    ;;
+  shuffled_specificity)
+    TABLE="$SHUFFLED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    ;;
   *)
     echo "unknown mode: $MODE" >&2
     exit 2

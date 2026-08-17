@@ -30,6 +30,12 @@ def test_factorized_value_blocks_match_flatten_when_all_gates_equal() -> None:
         hc_mult=2,
         zero_init=False,
     )
+    routed(torch.randn(2, 3, 4, 6), torch.randn(2, 3, 2, 12))
+    assert routed.last_gate is not None
+    assert torch.equal(
+        routed.last_gate.ne(0).sum(dim=-1),
+        torch.full((2, 3, 2), 2, dtype=torch.long),
+    )
     routed.w_v.weight.data.copy_(flat.w_v.weight.data)
     # Zero keys make every route gate exactly 0.5 in both implementations.  This
     # isolates the block decomposition identity without conflating router behavior.
@@ -87,6 +93,37 @@ def test_top_k_routes_exactly_requested_number_of_heads() -> None:
     assert torch.equal(
         routed.last_gate.ne(0).sum(dim=-1),
         torch.full((2, 3, 2), 2, dtype=torch.long),
+    )
+
+
+def test_specificity_selects_heads_without_changing_gate_amplitudes() -> None:
+    config = make_config(
+        head_router_top_k=2,
+        head_router_selection="specificity",
+        head_router_preserve_mass=True,
+    )
+    routed = HeadFactorizedGating(
+        config,
+        num_heads=4,
+        embedding_dim_per_head=6,
+        hidden_size=12,
+        hc_mult=2,
+        zero_init=False,
+    )
+    embeddings = torch.randn(1, 2, 4, 6)
+    hidden = torch.randn(1, 2, 2, 12)
+    specificity = torch.tensor([[[9.0, 8.0, -2.0, -3.0], [-2.0, -3.0, 9.0, 8.0]]])
+    routed(embeddings, hidden, head_selection_scores=specificity)
+    assert routed.last_gate is not None
+    assert torch.equal(
+        routed.last_gate.ne(0)[0, 0, 0], torch.tensor([True, True, False, False])
+    )
+    assert torch.equal(
+        routed.last_gate.ne(0)[0, 1, 0], torch.tensor([False, False, True, True])
+    )
+    assert routed.last_route_logits is not None
+    torch.testing.assert_close(
+        routed.last_gate.sum(dim=-1), routed.last_route_logits.sigmoid().sum(dim=-1)
     )
 
 
@@ -154,6 +191,7 @@ def test_credit_config_round_trip() -> None:
     config = make_config(
         head_router_top_k=4,
         head_router_preserve_mass=True,
+        head_router_selection="specificity",
         head_router_use_null=True,
         head_router_null_threshold=0.2,
         credit_loss_weight=0.2,
@@ -165,6 +203,7 @@ def test_credit_config_round_trip() -> None:
     assert restored.memory_fusion == "head_factorized"
     assert restored.head_router_top_k == 4
     assert restored.head_router_preserve_mass is True
+    assert restored.head_router_selection == "specificity"
     assert restored.head_router_use_null is True
     assert restored.head_router_null_threshold == 0.2
     assert restored.credit_loss_weight == 0.2

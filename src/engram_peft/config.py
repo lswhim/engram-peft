@@ -208,6 +208,14 @@ class EngramConfig(PreTrainedConfig):
             "isolating head selection from total memory strength."
         },
     )
+    head_router_selection: str = field(
+        default="context",
+        metadata={
+            "help": "Score used to select sparse memory heads: 'context' uses the "
+            "learned Engram route logits; 'specificity' uses the inverse collision "
+            "load of the addressed RQ bucket. Gate amplitudes remain context-derived."
+        },
+    )
     head_router_use_null: bool = field(
         default=False,
         metadata={
@@ -297,6 +305,7 @@ class EngramConfig(PreTrainedConfig):
         memory_fusion: str = "flatten",
         head_router_top_k: int = 0,
         head_router_preserve_mass: bool = False,
+        head_router_selection: str = "context",
         head_router_use_null: bool = False,
         head_router_null_threshold: float = 0.0,
         credit_loss_weight: float = 0.0,
@@ -347,6 +356,7 @@ class EngramConfig(PreTrainedConfig):
         self.memory_fusion = memory_fusion
         self.head_router_top_k = head_router_top_k
         self.head_router_preserve_mass = head_router_preserve_mass
+        self.head_router_selection = head_router_selection
         self.head_router_use_null = head_router_use_null
         self.head_router_null_threshold = head_router_null_threshold
         self.credit_loss_weight = credit_loss_weight
