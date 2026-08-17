@@ -3,10 +3,32 @@ set -euo pipefail
 
 GPU_ID="$1"
 MODE="$2"
+EMBED_SIZE="${3:-0.6b}"
 ROOT=/anguszhang-cfs-nj/seokliu_workspace/engram_multilingual
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
-SOURCE=rq_tables/fineweb_M8K16_300k_strict
+
+case "$EMBED_SIZE" in
+  0.6b)
+    EMBEDDER=Qwen/Qwen3-Embedding-0.6B
+    EMBED_TAG=qwen3emb06b
+    SOURCE=rq_tables/fineweb_M8K16_300k_strict
+    ;;
+  4b)
+    EMBEDDER=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-4B
+    EMBED_TAG=qwen3emb4b
+    SOURCE=rq_tables/fineweb_qwen3emb4b_M8K16_300k_strict
+    ;;
+  8b)
+    EMBEDDER=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-8B
+    EMBED_TAG=qwen3emb8b
+    SOURCE=rq_tables/fineweb_qwen3emb8b_M8K16_300k_strict
+    ;;
+  *)
+    echo "unknown embedder size: $EMBED_SIZE" >&2
+    exit 2
+    ;;
+esac
 
 cd "$ROOT"
 export CUDA_VISIBLE_DEVICES="$GPU_ID"
@@ -15,26 +37,27 @@ export https_proxy=http://star-proxy.oa.com:3128
 export http_proxy=http://star-proxy.oa.com:3128
 export no_proxy=.woa.com,.oa.com,.tencentcos.cn,localhost,127.0.0.1
 export HF_HUB_DISABLE_XET=1
-mkdir -p run_logs outputs/semantic_memory/pararel_fineweb_k16
+OUTDIR="outputs/semantic_memory/pararel_fineweb_k16/${EMBED_TAG}"
+mkdir -p run_logs "$OUTDIR"
 
 if [[ "$MODE" == semantic ]]; then
   "$PY" -u scripts/build_rq_table.py \
     --dataset HuggingFaceFW/fineweb-edu --dataset_config sample-10BT \
     --split train --text_column text --num_docs 12000 \
-    --base_tokenizer "$BASE" --embedder Qwen/Qwen3-Embedding-0.6B \
+    --base_tokenizer "$BASE" --embedder "$EMBEDDER" \
     --num_levels 8 --codebook_size 16 --projection_dim 0 \
     --max_ngrams_per_size 300000 --min_count 2 --output_dir "$SOURCE"
   TABLE="$SOURCE"
-  RUN=pararel5k_fineweb_qwen3emb06b_k16_semantic_seed42
-  RESULT=outputs/semantic_memory/pararel_fineweb_k16/semantic_seed42.json
+  RUN=pararel5k_fineweb_${EMBED_TAG}_k16_semantic_seed42
+  RESULT="$OUTDIR/semantic_seed42.json"
 elif [[ "$MODE" == shuffled ]]; then
   while [[ ! -f "$SOURCE/meta.json" ]]; do sleep 15; done
-  TABLE=rq_tables/fineweb_M8K16_300k_strict_runtime_shuffled_seed42
+  TABLE="${SOURCE}_runtime_shuffled_seed42"
   if [[ ! -f "$TABLE/meta.json" ]]; then
     "$PY" scripts/make_runtime_shuffled_rq.py --source "$SOURCE" --output "$TABLE" --seed 42
   fi
-  RUN=pararel5k_fineweb_qwen3emb06b_k16_shuffled_seed42
-  RESULT=outputs/semantic_memory/pararel_fineweb_k16/shuffled_seed42.json
+  RUN=pararel5k_fineweb_${EMBED_TAG}_k16_shuffled_seed42
+  RESULT="$OUTDIR/shuffled_seed42.json"
 else
   echo "unknown mode: $MODE" >&2
   exit 2
