@@ -166,20 +166,41 @@ def encode_texts(
     return outputs
 
 
-def shuffled_codes(codes: np.ndarray, order: int, levels: int, k: int, seed: int) -> np.ndarray:
-    output = np.empty_like(codes, dtype=np.int64)
-    flat = codes.reshape(-1, levels)
-    shuffled = output.reshape(-1, levels)
-    for index, row in enumerate(flat):
-        digest = hashlib.blake2b(
-            np.asarray(row, dtype=np.uint32).tobytes(),
-            digest_size=8 * levels,
-            person=f"rq{seed}:{order}".encode()[:16],
-        ).digest()
-        shuffled[index] = (
-            np.frombuffer(digest, dtype=np.uint64) % k
-        ).astype(np.int64)
-    return output
+class JointCodeShuffler:
+    """Memoized implementation of the runtime joint-code shuffle control."""
+
+    def __init__(self, levels: int, k: int, seed: int) -> None:
+        self.levels = levels
+        self.k = k
+        self.seed = seed
+        self.cache: dict[tuple[int, tuple[int, ...]], np.ndarray] = {}
+
+    def __call__(self, codes: np.ndarray, order: int) -> np.ndarray:
+        flat = codes.reshape(-1, self.levels)
+        output = np.empty_like(flat, dtype=np.int64)
+        for index, row in enumerate(flat):
+            row_tuple = tuple(map(int, row))
+            cache_key = (order, row_tuple)
+            shuffled = self.cache.get(cache_key)
+            if shuffled is None:
+                digest = hashlib.blake2b(
+                    np.asarray(row_tuple, dtype=np.uint32).tobytes(),
+                    digest_size=8 * self.levels,
+                    person=f"rq{self.seed}:{order}".encode()[:16],
+                ).digest()
+                shuffled = (
+                    np.frombuffer(digest, dtype=np.uint64) % self.k
+                ).astype(np.int64)
+                self.cache[cache_key] = shuffled
+            output[index] = shuffled
+        return output.reshape(codes.shape)
+
+
+def shuffled_codes(
+    codes: np.ndarray, order: int, levels: int, k: int, seed: int
+) -> np.ndarray:
+    """Compatibility helper used by small tests; bulk analysis reuses one shuffler."""
+    return JointCodeShuffler(levels, k, seed)(codes, order)
 
 
 def common_prefix(left: np.ndarray, right: np.ndarray) -> int:
@@ -242,21 +263,26 @@ def terminal_bucket_report(
     *,
     shuffled_seed: int | None = None,
     codebook_size: int | None = None,
+    shuffler: JointCodeShuffler | None = None,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {}
+    terminal_codes: list[np.ndarray] = []
+    for code_map in canonical:
+        codes = code_map[order][-1]
+        if shuffled_seed is not None:
+            if codebook_size is None:
+                raise ValueError("codebook_size is required for shuffled buckets")
+            active_shuffler = shuffler or JointCodeShuffler(
+                levels, codebook_size, shuffled_seed
+            )
+            codes = active_shuffler(codes.reshape(1, -1), order)[0]
+        terminal_codes.append(codes)
     for depth in range(1, levels + 1):
         relation_buckets: dict[tuple[int, ...], Counter[str]] = defaultdict(Counter)
         subject_buckets: dict[tuple[int, ...], Counter[str]] = defaultdict(Counter)
         loads: Counter[tuple[int, ...]] = Counter()
-        for case, code_map in zip(cases, canonical, strict=True):
-            codes = code_map[order]
-            if shuffled_seed is not None:
-                if codebook_size is None:
-                    raise ValueError("codebook_size is required for shuffled buckets")
-                codes = shuffled_codes(
-                    codes, order, levels, codebook_size, shuffled_seed
-                )
-            key = tuple(map(int, codes[-1, :depth]))
+        for case, codes in zip(cases, terminal_codes, strict=True):
+            key = tuple(map(int, codes[:depth]))
             loads[key] += 1
             relation_buckets[key][case.relation] += 1
             subject_buckets[key][normalize(case.subject)] += 1
@@ -308,9 +334,22 @@ def compute_pair_report(
     shuffled_seed: int | None,
     codebook_size: int,
     random_seed: int,
+    shuffler: JointCodeShuffler | None = None,
 ) -> dict[str, Any]:
     output: dict[str, Any] = {}
     for order in orders:
+        shuffled_cache: dict[str, np.ndarray] = {}
+
+        def shuffled_for(text: str, codes: np.ndarray) -> np.ndarray:
+            cached = shuffled_cache.get(text)
+            if cached is None:
+                active_shuffler = shuffler or JointCodeShuffler(
+                    levels, codebook_size, int(shuffled_seed)
+                )
+                cached = active_shuffler(codes, order)
+                shuffled_cache[text] = cached
+            return cached
+
         role_values: dict[str, dict[str, list[int]]] = {
             role: {"terminal": [], "anywhere": []}
             for role in ("propagation", "locality", "random")
@@ -330,9 +369,7 @@ def compute_pair_report(
                 "random": [cases[random_index].prompt],
             }
             if shuffled_seed is not None:
-                shuffled_source = shuffled_codes(
-                    source, order, levels, codebook_size, shuffled_seed
-                )
+                shuffled_source = shuffled_for(case.prompt, source)
             for role, queries in targets.items():
                 for query in queries:
                     target = encoded_by_text[query][order]
@@ -340,9 +377,7 @@ def compute_pair_report(
                     role_values[role]["terminal"].append(terminal)
                     role_values[role]["anywhere"].append(anywhere)
                     if shuffled_seed is not None:
-                        shuffled_target = shuffled_codes(
-                            target, order, levels, codebook_size, shuffled_seed
-                        )
+                        shuffled_target = shuffled_for(query, target)
                         s_terminal, s_anywhere = pair_prefix_stats(
                             shuffled_source, shuffled_target
                         )
@@ -469,6 +504,9 @@ def main() -> None:
     encoded_by_text = dict(zip(unique_texts, encoded, strict=True))
     canonical = [encoded_by_text[text] for text in canonical_texts]
     orders = [int(order) for order in mapping.ngram_sizes]
+    shuffler = JointCodeShuffler(
+        mapping.num_levels, mapping.codebook_size, int(shuffled_seed)
+    )
 
     payload = {
         "status": "complete",
@@ -512,6 +550,7 @@ def main() -> None:
                     mapping.num_levels,
                     shuffled_seed=int(shuffled_seed),
                     codebook_size=mapping.codebook_size,
+                    shuffler=shuffler,
                 ),
             }
             for order in orders
@@ -525,6 +564,7 @@ def main() -> None:
             int(shuffled_seed),
             mapping.codebook_size,
             args.seed,
+            shuffler,
         ),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
