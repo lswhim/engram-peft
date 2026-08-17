@@ -191,10 +191,12 @@ Arithmetic 三 seeds 已完成。50K Arithmetic 的 Efficacy/Generalization/Loca
 
 | Axis / address slice | Three-seed delta (pp) | 95% CI | Queries / seed |
 |---|---:|---:|---:|
-| Generalization / dynamic-any | **+2.970** | 待按合并二元切片导出 | 1,797 |
+| Generalization / dynamic-any | **+2.971** | **[+2.445,+3.499]** | 1,797 |
 | Generalization / offline-all | **+2.750** | **[+1.233,+4.294]** | 203 |
-| Locality / dynamic-any | **+0.484** | 待按合并二元切片导出 | 1,996 |
+| Locality / dynamic-any | **+0.484** | **[+0.022,+0.915]** | 1,996 |
+| Multi-hop / dynamic-any | **+1.564** | **[+0.527,+2.665]** | 110 |
 | Efficacy / offline-all | **+2.876** | **[+2.337,+3.429]** | 1,967 |
+| Efficacy / dynamic-any | -0.850 | [-2.828,+1.052] | 33 |
 
 最重要的是，`89.85%` 的 generalization queries 属于 dynamic-any，三 seed aggregate 增益约 `+2.97 pp`；因此总体
 generalization 增益没有在首次出现的新 n-gram 上消失。Efficacy 的 dynamic-any 只有 33 条，不能稳定外推。
