@@ -15,6 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--interval", type=float, default=15)
+    parser.add_argument("--once", action="store_true")
     parser.add_argument("--instance", default="8b1d815e9eef2052019ef80778f8098a")
     parser.add_argument(
         "--remote",
@@ -40,12 +41,14 @@ def main() -> None:
                 if line.strip() and not line.startswith("--- ")
             )
             data = base64.b64decode(payload, validate=True)
-            if b"FULL OFFICIAL BENCHMARKS" not in data:
+            if not any(marker in data for marker in (b"FULL OFFICIAL BENCHMARKS", b"Semantic-Hash Engram")):
                 raise ValueError("unexpected dashboard payload")
             args.output.parent.mkdir(parents=True, exist_ok=True)
             tmp = args.output.with_suffix(".tmp")
             tmp.write_bytes(data)
             os.replace(tmp, args.output)
+            if args.once:
+                return
         except Exception as exc:
             print(f"sync failed: {exc}", flush=True)
         time.sleep(args.interval)
