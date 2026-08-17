@@ -75,6 +75,7 @@ def convert_row(row: dict[str, Any], timestep: str, index: int) -> dict[str, Any
         "queries": queries,
         "metadata": {
             "timestep": timestep,
+            "cohort_origin": timestep,
             "source_index": index,
             "tag": row.get("tag"),
             "subject": row.get("subject"),

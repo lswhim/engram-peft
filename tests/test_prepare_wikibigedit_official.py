@@ -21,6 +21,7 @@ def test_convert_row_preserves_all_official_axes() -> None:
     assert case["case_id"] == "t0:7"
     assert case["prompt"] == row["update"]
     assert case["target"] == row["ans"]
+    assert case["metadata"]["cohort_origin"] == "t0"
     assert [item["axis"] for item in case["queries"]] == [
         "efficacy",
         "generalization",
