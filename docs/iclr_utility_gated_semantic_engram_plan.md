@@ -95,8 +95,8 @@ Qwen3-1.7B-Base、Qwen3-Embedding-4B、RQ `M=8/K=16`，chronological 10K writes�
 |---|---:|---:|---:|---:|
 | Semantic + collision-aware | **56.241 ± 0.194** | **54.089 ± 0.075** | 44.616 ± 0.044 | 32.514 ± 0.286 |
 | Semantic + flatten | 54.478 ± 0.035 | 52.437 ± 0.107 | **44.737 ± 0.102** | **32.784 ± 0.093** |
-| Shuffled + collision-aware | 54.170 ± 0.116 | 51.848 ± 0.103 | 44.657 ± 0.333 | 33.663 ± 0.488 |
-| Shuffled + flatten | 52.825 ± 0.098 | 51.639 ± 0.108 | 45.289 ± 0.186 | 34.115 ± 0.874 |
+| Runtime-randomized RQ + collision-aware | 54.170 ± 0.116 | 51.848 ± 0.103 | 44.657 ± 0.333 | 33.663 ± 0.488 |
+| Runtime-randomized RQ + flatten | 52.825 ± 0.098 | 51.639 ± 0.108 | 45.289 ± 0.186 | 34.115 ± 0.874 |
 
 配对差值：
 
@@ -132,7 +132,8 @@ Semantic-RQ + flatten 的 mean ± sample std（%）为：
 
 当前能够支持：
 
-1. Semantic 地址优于保持 joint collision identity 的 shuffled 地址；
+1. Semantic 地址优于当前 deterministic runtime-randomized RQ；该控制会改变 marginal bucket loads，因而只是
+   初步语义消融，仍需 load-matched shuffle 才能严格归因；
 2. collision-aware selection 稳定改善 Semantic Engram 的 efficacy/generalization；
 3. interaction 明显大于零，收益不是普通 top-k 稀疏化可以完全解释；
 4. locality 和 multi-hop 相对 Semantic flatten 基本保持。
@@ -175,11 +176,16 @@ teacher-forced target-token accuracy；Locality 使用编辑前后预测保持�
 
 1. Arithmetic-fixed Engram：原始无语义地址；
 2. Semantic-RQ + flatten：最强直接 semantic-hash baseline；
-3. RQ-Shuffled + flatten：保留容量与 joint collision、移除 semantic assignment；
-4. RQ-Shuffled + collision-aware：判断 selection 是否只是一般稀疏正则；
+3. RQ-Shuffled-load-matched + flatten：只在完全相同 train-access frequency 的 rows 间置换完整 code vector，
+   精确保留 joint-code multiset、各 level histogram 与 access-weighted bucket load；
+4. RQ-Shuffled-load-matched + collision-aware：判断 selection 是否只是一般稀疏正则；
 5. **Semantic-RQ + collision-aware**：完整方法。
 
 这五个方法形成 `address geometry × readout` 的 2×2 因果矩阵，并额外用 Arithmetic 锚定原始 Engram。
+当前正在运行的 `runtime-randomized RQ` 保留为补充的强随机化对照，但不能替代上述 load-matched 主对照：它对
+完整 semantic code vector 做确定性随机映射，虽基本保留 full-code equality groups，却改变 per-head marginal loads，
+并在有限 code space 中引入极少量额外 joint collisions。所有动态 OOV 必须单独报告；load-matched 离线 rows 与
+OOV deterministic randomization 的结果也需分别切片。
 
 ### 5.3 外部 benchmark
 
