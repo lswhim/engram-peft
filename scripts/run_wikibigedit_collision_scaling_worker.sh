@@ -11,6 +11,7 @@ BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 MANIFEST=data/semantic_memory/wikibigedit_chronological.jsonl
 SEMANTIC_TABLE=rq_tables/wikibigedit50k_qwen3emb4b_M8K16
 SHUFFLED_TABLE=rq_tables/wikibigedit50k_qwen3emb4b_M8K16_runtime_shuffled_seed42
+LOADMATCHED_TABLE=rq_tables/wikibigedit50k_qwen3emb4b_M8K16_loadmatched_seed42
 OUT_ROOT="outputs/semantic_memory/wikibigedit_collision_scaling_${SCALE}"
 
 if [[ "$SCALE" != "50000" ]]; then
@@ -43,6 +44,15 @@ case "$MODE" in
     ;;
   shuffled_flatten)
     TABLE="$SHUFFLED_TABLE"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
+    ;;
+  loadmatched_specificity)
+    TABLE="$LOADMATCHED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
+  loadmatched_flatten)
+    TABLE="$LOADMATCHED_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
   arithmetic)

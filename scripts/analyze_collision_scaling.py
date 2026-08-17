@@ -23,11 +23,15 @@ DEFAULT_METHODS = (
     "semantic_flatten",
     "shuffled_flatten",
     "shuffled_specificity",
+    "loadmatched_flatten",
+    "loadmatched_specificity",
     "semantic_specificity",
 )
 DEFAULT_PAIRS = (
     ("semantic_specificity", "semantic_flatten"),
     ("semantic_specificity", "shuffled_specificity"),
+    ("semantic_specificity", "loadmatched_specificity"),
+    ("semantic_flatten", "loadmatched_flatten"),
     ("semantic_flatten", "arithmetic"),
 )
 
