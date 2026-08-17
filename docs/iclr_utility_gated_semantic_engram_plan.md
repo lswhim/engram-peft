@@ -1,367 +1,281 @@
-# CREDIT-Engram：具有反事实信用分配的语义条件记忆
+# Collision-Aware Semantic Engram：论文与完整实验规划
 
-> 版本：v2（2026-08-18，WikiBigEdit-50K 地址审计后修订）
-> 目标：ICLR 2027 级完整研究，而非 smoke test  
+> 版本：v3（2026-08-18）
+> 目标：ICLR 2027 方法论文；标准 benchmark、完整规模、可证伪因果对照
 > 资源：4 × NVIDIA A100 40GB  
-> 当前判断：单独把 Arithmetic Hash 替换为 Semantic RQ 不足以构成稳定贡献；核心问题是语义共享发生后，Engram gate 无法判断这次共享是帮助还是干扰。
+> 当前状态：10K 四方法 × 三 seed 已完成；冻结方法后的 WikiBigEdit-50K 正式 scaling 正在运行
 
-## 1. 从当前结果出发，而不是从想象出发
+## 1. 一句话故事
 
-现有完整结果给出两个同时存在的事实：
+Semantic hash 不只是把相似 n-gram 放到相近地址；它还产生了**具有不同碰撞负载的多个共享候选**。现有
+Engram 把所有候选无差别读取，因此有益语义共享与过载碰撞同时进入模型。我们利用地址表自身可离线统计的
+collision specificity，优先读取更可靠的 semantic buckets，在不增加可训练参数、不读取测试标签的条件下改善
+知识写入后的泛化。
 
-1. WikiBigEdit@50K 中 Semantic-RQ 相比 Arithmetic 在 efficacy/generalization 上约有 3 pp 增益，说明 RQ 型共享结构对大规模连续写入有价值；
-2. 但 Semantic-RQ 与 RQ-Shuffled 几乎相同，说明当前模型并未稳定利用 code 的语义排列，收益主要来自共享/碰撞结构，而非语义几何本身。
+暂定标题：
 
-ParaRel 上，Qwen3-Embedding-4B、M=8、K=16 的 Semantic-RQ 明显优于 Shuffled，但仍未稳定胜过 Arithmetic。这进一步说明语义地址不是完全无效，而是其收益高度依赖任务和 memory 使用方式。
+> **Trust the Address, Not Every Collision: Collision-Aware Semantic Memory for Language Models**
 
-Engram-Nine 的独立观察与此一致：单纯提高 lookup precision 并不保证效果，gate 可能长期偏好实际损失更高的 route。原始 Engram 也指出早层 memory 有利于提前完成局部模式重构，但早层上下文不足会降低 gating precision。
+## 2. Motivation：为什么不能只做 Semantic RQ
 
-因此，论文不能继续讲：
+原始 Engram 的 arithmetic hash 只负责稳定寻址，collision 基本没有语义。Semantic RQ 将冻结 embedding 的
+局部几何投射到离散地址，使相关表达有机会复用 memory rows；但它同时带来一个此前不存在的问题：
 
-> semantic embedding 更强 → hash 更语义 → Engram 自然更好。
+```text
+语义相似 -> 地址部分共享 -> 可能迁移已写知识
+高频/多义 bucket -> 大量无关 n-gram 共享 -> memory interference
+```
 
-真正的问题是：
+RQ 的 8 个 residual codes 是 8 个并行地址候选，并不天然构成“关系到实体”的可解释语义层级。WikiBigEdit-50K
+地址审计已经否定了这种过强假设：Semantic 的中间 prefix overlap 高于 shuffled，但 propagation 和 locality
+都提高，不能把 RQ depth 直接解释为任务相关的 coarse-to-fine hierarchy。
 
-> Semantic RQ 提供了不同粒度的共享候选，但现有 Engram 把所有 RQ head 扁平拼接，并只通过最终语言模型损失间接训练 gate。模型既不知道 RQ level 的粒度，也没有直接信号判断一次 memory 注入对当前 token 是有益还是有害。
+因此真正的问题不是“semantic embedding 是否更强”，而是：
 
-### 1.1 WikiBigEdit-50K 地址审计：层级假设被否定
+> **当 semantic addressing 主动制造共享时，模型应该信任哪些 collision？**
 
-审计覆盖与现有 WikiBigEdit@50K 主实验严格匹配的 50,000 个 chronological edits，包含 52,357 条
-propagation query、50,000 条 locality query，共 149,112 个唯一文本。所有 OOV n-gram 都使用冻结的
-Qwen3-Embedding-4B 与同一 M=8/K=16 RQ 在线编码；Semantic 与 runtime-shuffled 逐 query 配对。
+## 3. 方法：Collision-Aware Semantic Engram
 
-关键结果：
+### 3.1 动态语义地址
 
-| Order / terminal suffix | Semantic propagation | Semantic locality | Shuffled propagation | Shuffled locality |
+对运行时出现的每个 2/3-gram：
+
+```text
+n-gram -> frozen Qwen3-Embedding -> frozen FAISS RQ -> M discrete codes
+```
+
+首次出现时执行 encoder/RQ forward，并写入 persistent cache；后续为确定性查表。训练和推理使用相同冻结
+encoder/codebook。不能把词典外 n-gram 回退为 arithmetic hash，否则 semantic generalization 在真正的新表达上
+会消失。
+
+### 3.2 地址可靠性
+
+只用训练地址表，统计第 `j` 个 codebook 中 bucket `c` 所包含的 distinct n-gram 数：
+
+\[
+L_{j,c}=|\{g:q_j(g)=c\}|,\qquad
+S_{j,c}=-\log(1+L_{j,c}).
+\]
+
+`L` 越大，bucket 越容易混入无关模式；`S` 越高，地址越 specific。该统计：
+
+- 不使用下游测试 query、答案或 evaluation label；
+- 不增加可训练参数；
+- 可随 RQ 表离线构建并与 memory 一起 offload；
+- 对运行时动态编码得到的 code 同样可查询。
+
+### 3.3 参数匹配的 head selection
+
+把原本 flatten 后的一次投影按输入 block 精确分解：
+
+\[
+W^V[e_1;\ldots;e_H]=\sum_j W^V_j e_j.
+\]
+
+按当前 token 实际访问 bucket 的 `S_{j,c}` 选择 top-k heads：
+
+\[
+\mathcal I_t=\operatorname{TopK}_j S_{j,c_{t,j}},\qquad
+m_t=\sum_{j\in\mathcal I_t}a_{t,j}W^V_je_{t,j}.
+\]
+
+其中 `a` 仍由原始 context gate 决定，specificity 只决定读哪些 heads。为排除“少读 head 导致注入幅值变小”
+的混淆，selected gate mass 被重标定为与 dense flatten 相同。正式配置冻结为 `k=4`。
+
+方法的核心不是额外 router，而是把 semantic address 中已经存在、却被 flatten 丢弃的**地址可靠性信号**用于
+memory readout。
+
+## 4. 已有证据与当前结论
+
+### 4.1 WikiBigEdit-10K 完整三 seed 结果
+
+Qwen3-1.7B-Base、Qwen3-Embedding-4B、RQ `M=8/K=16`，chronological 10K writes。结果为 mean ± sample std：
+
+| Address / readout | Efficacy | Generalization | Locality | Multi-hop |
 |---|---:|---:|---:|---:|
-| 2-gram mean prefix depth | 3.533 | 3.547 | 3.120 | 3.110 |
-| 3-gram mean prefix depth | 3.205 | 2.236 | 2.872 | 1.793 |
+| Semantic + collision-aware | **56.241 ± 0.194** | **54.089 ± 0.075** | 44.616 ± 0.044 | 32.514 ± 0.286 |
+| Semantic + flatten | 54.478 ± 0.035 | 52.437 ± 0.107 | **44.737 ± 0.102** | **32.784 ± 0.093** |
+| Shuffled + collision-aware | 54.170 ± 0.116 | 51.848 ± 0.103 | 44.657 ± 0.333 | 33.663 ± 0.488 |
+| Shuffled + flatten | 52.825 ± 0.098 | 51.639 ± 0.108 | 45.289 ± 0.186 | 34.115 ± 0.874 |
 
-- 2-gram 的 semantic prefix 完全不能区分 propagation 与 locality；
-- 3-gram 有任务区分，但 Semantic 相对 Shuffled 对 propagation 增加约 0.33 层，对 locality 增加约
-  0.44 层，false sharing 同样甚至更强；
-- `anywhere-in-prompt` overlap 被公共 n-gram 饱和，不可作为机制证据；
-- terminal bucket 的中间层 relation purity 多数低于 Shuffled，说明 FAISS RQ residual level 是重构层级，
-  不是可直接解释为“粗关系语义→细实体语义”的层级；
-- 完整 joint-code 相同率在 Semantic/Shuffled 中必然一致，因为 shuffled control 保留 joint-code identity。
+配对差值：
 
-因此，v1 的 ordered-depth 方案正式否决。后续方法不得声称 RQ level 天然具有可用的语义抽象顺序。
+- Collision-aware − Semantic flatten：Efficacy `+1.764 ± 0.160`，Generalization `+1.652 ± 0.181`；
+  Locality `−0.121 ± 0.078`，Multi-hop `−0.270 ± 0.357`。
+- Semantic collision-aware − Shuffled collision-aware：Efficacy `+2.072 ± 0.229`，Generalization
+  `+2.241 ± 0.143`。
+- Generalization 的 interaction：
+  `(Semantic aware − Semantic flatten) − (Shuffled aware − Shuffled flatten)` = **`+1.444 ± 0.311`**。
 
-## 2. 论文核心假设
+三个 seed 上 Semantic aware 相对 Semantic flatten 的 generalization 增益分别为 `+1.855/+1.508/+1.595`
+pp，方向一致。
 
-### 2.1 一句话 motivation
+### 4.2 能说与不能说的结论
 
-Semantic addressing determines **who may share a memory**, but a useful conditional memory must additionally learn **how much to share and whether the shared memory causally helps the current prediction**.
+当前能够支持：
 
-### 2.2 修订后的可证伪假设
+1. Semantic 地址优于保持 joint collision identity 的 shuffled 地址；
+2. collision-aware selection 稳定改善 Semantic Engram 的 efficacy/generalization；
+3. interaction 明显大于零，收益不是普通 top-k 稀疏化可以完全解释；
+4. locality 和 multi-hop 相对 Semantic flatten 基本保持。
 
-1. Semantic RQ 的不同 heads 提供不同的共享候选，但不存在可靠的有序 depth；
-2. 当前 flatten gate 只能对所有 heads 混合后的 value 做统一调制，无法区分有益与有害 collision；
-3. 将读写分解到逐 head route，并保持相同投影参数量，可以控制结构化共享造成的 transfer/interference；
-4. 用等激活预算的反事实 route pair 产生 utility preference，可以改善 router 与真实 token loss 的对齐；
-5. 改善 credit assignment 后，Semantic-RQ 相对 RQ-Shuffled 的差距应扩大；否则 semantic ordering 不能列为核心贡献。
+当前还不能声称：
 
-## 3. 方法：CREDIT-Engram
+- 已达到 ICLR 完整证据标准；当前只有一个 benchmark 的 10K 结果；
+- RQ levels 是可解释的语义层级；地址审计不支持；
+- 方法已经带来实际 wall-clock 加速；当前实现重点是统计稀疏，而非 kernel 稀疏；
+- 对所有知识编辑、语言迁移或模型尺度均有效。
 
-## 3. 方法：CREDIT-Engram
+## 5. 正式实验协议
 
-暂定全称：**Counterfactual Residual-utility Estimation for Dynamic, Interference-aware Transfer**。
+### 5.1 主实验：WikiBigEdit lifelong scaling
 
-方法由一个统一原则导出：semantic memory 的 collision 不是先验的好或坏，必须在读和写时按其对当前预测的
-反事实效用分配信用。RQ heads 被视为并行候选 route，而不是虚构成语义深度。
-
-### 3.1 多头语义地址
-
-对每个 suffix n-gram `g_t`：
-
-```text
-Qwen3-Embedding(g_t) -> frozen RQ -> (c_1, ..., c_L)
-```
-
-首次遇到 n-gram 时执行 embedding 和 RQ 编码，随后把 codes 与必要的量化统计写入 persistent cache。热路径仍为确定性查表。训练和推理使用同一冻结 encoder/codebook。
-
-### 3.2 参数匹配的逐 head value 分解
-
-当前实现：
+固定协议：
 
 ```text
-[2/3-gram × L levels × d_head] -> flatten -> one ContextAwareGate
-```
-
-新实现保留 16 个 head（2/3-gram × 8 RQ heads）的轴：
-
-\[
-e_{t,j}=M_j[c_{t,j}], \qquad
-v_{t,j}=W^V_j e_{t,j}.
-\]
-
-这里 `W^V_j` 不是新增的大矩阵，而是原始 `W^V` 按输入维度切出的 block：
-
-\[
-W^V=[W^V_1|\cdots|W^V_H],\qquad
-W^V[e_1;\cdots;e_H]=\sum_jW^V_je_j.
-\]
-
-因此逐 head value decomposition 与 flatten baseline 严格参数匹配；变化只在于允许每个候选 route 独立获得
-read/write credit。
-
-### 3.3 Head-factorized read router 与 null route
-
-每个 head 根据 hidden state 与该 head 的 memory value 预测效用分数：
-
-\[
-r_{t,j}=g(h_t,e_{t,j},j).
-\]
-
-在固定激活预算 `k` 下选择 top-k heads，并与显式 null route 比较：
-
-\[
-m_t=\sum_{j\in S_t}a_{t,j}v_{t,j},\qquad |S_t|=k,
-\]
-
-若 null route 分数最高，则本 token 不读取 memory。Semantic、Shuffled、Arithmetic 都使用同一 router 和相同
-top-k 预算，防止用更多激活 memory 换取效果。
-
-### 3.4 等计算量反事实 route-pair credit
-
-普通 LM loss 只评价实际执行的一条 route。训练时对部分样本采样两个具有相同 head 数的 route：
-
-```text
-route A: S_A, |S_A|=k
-route B: S_B, |S_B|=k
-```
-
-两个 route 通过 batch 内复制在一次 batched 调用中执行。由监督 token NLL 得到停止梯度的 route preference：
-
-\[
-\Delta u_t=\operatorname{sg}[\ell(y_t;S_B)-\ell(y_t;S_A)].
-\]
-
-router 用 Bradley--Terry pairwise loss 预测哪条 route 更好：
-
-\[
-\mathcal L_{credit}=-\log\sigma\left(
--\operatorname{sign}(\Delta u_t)
-[R(S_A)-R(S_B)]/\tau
-\right).
-\]
-
-总目标：
-
-\[
-\mathcal L=\mathcal L_{LM}+\lambda_c\mathcal L_{credit}
-+\lambda_0\mathcal L_{null}.
-\]
-
-另以 memory-on vs null 的配对校准 null route。正式 sweep 比较 25%、50%、100% paired examples；不做逐 head
-16 次 forward。推理只执行 top-k route，不需要 utility oracle。
-
-### 3.5 Utility-gated sparse write
-
-同一个 route mask 同时控制 gradient 写入哪些 memory rows：未选择或预测为负 utility 的 head 不更新。这样正向
-共享可以跨 paraphrase 累积，而冲突 collision 不会无条件污染所有 16 个 rows。Read-only gating 与 read+write
-gating 必须作为独立消融，验证收益是否来自更好的写入隔离。
-
-### 3.6 正样本与负样本
-
-- 正 utility：当前事实 canonical supervision；
-- transfer supervision 不使用 benchmark 测试 paraphrase，避免泄漏；
-- 负 utility：batch 内其他事实的 prompt、原数据提供的 locality prompt，或从训练 split 构造的 unrelated query；
-- 多个事实共享地址但答案冲突时，作为 hard negative；
-- 所有样本来源和构造规则在训练前冻结。
-
-## 4. 为什么它可能有效，以及为什么不是普通 A+B
-
-Semantic RQ 与 utility routing 解决同一个 transfer-interference 问题的两个必要部分：
-
-```text
-Semantic RQ          -> 产生多个结构化共享候选
-Factorized read/write-> 允许不同候选获得不同信用
-Counterfactual pairs -> 用真实 loss 判断 route 是否有益
-```
-
-只有 semantic hash：产生共享，但无法避免 false sharing。  
-只有普通 gate：没有语义结构，无法把新表述路由到已写 memory。  
-只有逐 head attention：仍然依赖单路线 LM loss，不能解决 Engram-Nine 指出的 credit mismatch。
-
-方法贡献不是“多加一个 gate”，而是第一次把 conditional memory 的 routing decision 用其因果边际 utility 显式监督。
-
-## 5. 完整实验协议
-
-### 5.1 主任务：WikiBigEdit lifelong scaling
-
-使用官方 chronological/timestep 划分，不只抽一个 10K pilot。
-
-```text
-writes = 1K / 5K / 10K / 50K / 100K
-seeds  = 3
-backbone main = Qwen3-1.7B-Base
+backbone        = Qwen3-1.7B-Base
 address encoder = Qwen3-Embedding-4B
-RQ = M=8, K=16（由现有 sweep 选定，不再用测试集调参）
+RQ              = M=8, K=16
+active heads    = k=4（10K development 后冻结）
+writes          = 1K / 5K / 10K / 50K / 100K
+seeds           = 42 / 123 / 456
 ```
 
-主指标必须覆盖 WikiBigEdit 定义的 Update、Rephrase、Locality、Personas、Multi-hop；另外报告历史 edit retention 和时间步间 forgetting。现有只覆盖 efficacy/generalization/locality 的自建表不足以作为最终 WikiBigEdit 主表。
+50K 使用由相同 chronological train split 构建的 50K 地址统计表，当前正在运行。100K 开始前必须重新构建
+100K 地址表与冻结 evaluation cohorts；不能直接沿用 50K specificity prior 后宣称标准 100K scaling。
 
-### 5.2 标准知识编辑外部有效性
+每个 milestone 报告 efficacy、rephrase/generalization、locality、multi-hop/persona（数据存在时）、最早 cohort
+retention 与 forgetting。所有方法使用相同数据顺序、训练 tokens、optimizer 和 checkpoint。
 
-- CounterFact：efficacy、paraphrase、neighborhood/locality；
+### 5.2 五个必要主表方法
+
+1. Arithmetic-fixed Engram：原始无语义地址；
+2. Semantic-RQ + flatten：最强直接 semantic-hash baseline；
+3. RQ-Shuffled + flatten：保留容量与 joint collision、移除 semantic assignment；
+4. RQ-Shuffled + collision-aware：判断 selection 是否只是一般稀疏正则；
+5. **Semantic-RQ + collision-aware**：完整方法。
+
+这五个方法形成 `address geometry × readout` 的 2×2 因果矩阵，并额外用 Arithmetic 锚定原始 Engram。
+
+### 5.3 外部 benchmark
+
+- CounterFact：rewrite efficacy、paraphrase、neighborhood/locality；
 - ZsRE：reliability、paraphrase、locality；
-- RippleEdits 或修订后的 multi-hop benchmark：传播与不应传播；
-- WikiBigEdit 是唯一主线，其他 benchmark 用于证明不是只对一个数据集特化。
+- RippleEdits 或 MQuAKE：需要传播与不应传播；
+- PAWS-X 只作为跨语言语义迁移诊断，不作为知识编辑主表替代品。
 
-### 5.3 方法主表
+至少一个外部知识编辑 benchmark 必须复现 Semantic-aware 对 Semantic-flatten 的同方向优势。
 
-领域基线：
+### 5.4 领域基线
+
+最终主表不能只有 Engram 内部变体。应加入：
 
 - Frozen Base；
-- Continual FT / LoRA；
-- 至少两个可在目标 backbone 上稳定复现的 lifelong KE 方法；优先采用 WikiBigEdit 官方实现中的方法和设置；
-- retrieval/external-memory baseline，因为 WikiBigEdit 原论文发现 retrieval 类方法在大规模编辑时可能更强。
+- Continual FT 与 LoRA；
+- WikiBigEdit 官方代码中可在相同 backbone/协议上复现的 lifelong KE baseline；
+- 一个 retrieval/external-memory baseline。
 
-Engram 因果基线：
+若公开实现无法支持 Qwen3，优先增加官方支持 backbone 的对应尺度复现实验，而不是自行做不可比的近似版本。
 
-- Arithmetic-fixed Engram；
-- RQ-Shuffled Engram；
-- Semantic-RQ + 原始 flatten gate；
-- Semantic-RQ + head-factorized router，但无 credit loss；
-- **CREDIT-Engram**。
+## 6. 消融与机制验证
 
-公平约束：相同 backbone、target layers、memory rows、embedding dimension、训练 tokens、optimizer search budget。除系统表外，所有 Engram 变体保持相同 trainable parameter budget；若新增 gate 参数，给 baseline 增加同规模 projection 的参数匹配对照。
+### 6.1 已冻结的开发消融
 
-### 5.4 核心消融
+`k∈{2,4,8}` 的完整 10K seed-42 sweep：k=4 是 Pareto 点；k=2 虽有相近泛化，但 locality 明显下降；k=8
+泛化较弱。因此正式主表不再调 k。
 
-1. 固定激活 heads `k in {1,2,4,8,16}`；
-2. flatten gate、head-factorized soft gate、top-k router；
-3. 无 credit、memory/null credit、equal-budget route-pair credit；
-4. Semantic vs Shuffled vs Arithmetic；
-5. 去掉 no-memory route；
-6. 去掉 locality/hard-negative credit；
-7. paired-example 比例和 `lambda_credit`；
-8. read-only routing vs read+write routing；
-9. inference 时强制 route/head reset，验证 learned routing 的因果作用。
+### 6.2 仍必须完成
 
-超参只在 WikiBigEdit validation timestep 上选择一次，其他 benchmark 直接迁移。
+1. bucket statistic：distinct load、token frequency、uniform/random ranking；
+2. selection：top-specific、bottom-specific、random-k、all-head flatten；
+3. mass preservation on/off，确认不是注入幅值效应；
+4. Semantic/Shuffled/Arithmetic，在完全相同 readout budget 下比较；
+5. RQ `M/K` 的小规模训练集 validation sweep，只用于稳健性，不重新选择主配置；
+6. embedding encoder 0.6B/4B/8B，报告质量与冷路径成本 Pareto；
+7. train-table load 与运行时 dynamic-cache load 分开统计，避免 OOV 口径混乱。
 
-### 5.5 机制分析
+### 6.3 机制链条
 
-必须证明下面的链条，而不是只画 gate heatmap：
+论文必须逐步验证：
 
 ```text
-语义相似
--> 至少部分 RQ heads 复用 source-updated rows
--> 这些 heads 的反事实 route utility 为正
--> router score 与 utility preference 对齐
--> harmful collision 被 null/read-write mask 拒绝
--> paraphrase / ripple gain
+semantic embedding neighborhood
+-> structured partial-code sharing
+-> bucket collision load 可预测干扰风险
+-> top-specific heads 复用更可靠的已写 rows
+-> paraphrase/generalization 增益
+-> shuffle / bottom-specific intervention 后增益消失
 ```
 
-报告：
+报告 query-level code overlap、selected bucket load、updated-row reuse、collision answer entropy，以及这些量与单 query
+增益/失败的关系。地址层面的相关性必须由 intervention 支撑，不能只画 embedding t-SNE。
 
-- 每个 head 的 embedding cosine、relation/entity purity、collision load 与 utility；
-- route-pair counterfactual utility 分布；
-- gate score 与 utility 的 AUROC、ECE、Spearman；
-- paraphrase、conflict、locality、head/tail entity 的 active heads/null rate；
-- reset shared rows、shuffle codes、强制 route 后的性能变化；
-- Semantic 相对 Shuffled 的收益按 code overlap 和 utility 分桶。
+## 7. 统计与成功门槛
 
-### 5.6 效率与系统属性
-
-- 首次 semantic encode + RQ 的 cold latency；
-- persistent cache 的 warm lookup latency和 hit rate；
-- Base、Arithmetic、Semantic-RQ、CREDIT-Engram 的 train/inference tokens/s；
-- counterfactual paired training 的额外 FLOPs 和 wall time；
-- GPU table 与 pinned CPU/offloaded table；
-- memory size、optimizer state、实际 touched rows；
-- top-k routing 带来的平均有效 heads，但不得把当前未实现的稀疏 gather 宣称为实际加速。
-
-## 6. 统计规范
-
-- 主结果 3 seeds，报告 mean ± std；
+- 主结果 3 seeds，报告 mean ± sample std；
+- 同一 query、同一 seed 做 paired difference；
 - query-level paired bootstrap 95% CI；
-- 多个 WikiBigEdit milestone 使用同一 chronological stream 和固定 evaluation cohorts；
-- 所有方法使用相同数据顺序；
-- 预注册 primary metric：WikiBigEdit Rephrase 与 Retention 的 harmonic mean，同时约束 Locality；
-- 不以最好 seed、最好 checkpoint 或测试集调参结果作为主表；
-- 同时报告绝对值和相对 Arithmetic、Shuffled、head-factorized-no-credit 的差值。
+- interaction 是预注册机制指标，而非只比较两个独立均值；
+- 不报告最好 seed、最好 checkpoint，不在 test milestone 上重新调超参；
+- 同时报告绝对指标、相对 Semantic flatten、相对 Shuffled-aware 和相对 Arithmetic。
 
-## 7. 成功门槛
+论文继续推进的最低门槛：
 
-论文的关键门槛不是 CREDIT 比 Base 高，而是：
+1. WikiBigEdit 50K/100K generalization 相对 Semantic flatten 至少约 `+1.0` pp，三 seed 同方向；
+2. paired bootstrap CI 排除 0；
+3. locality 下降不超过 `0.5` pp，或综合 Pareto 显著更优；
+4. Semantic interaction 保持明显为正；
+5. 至少一个外部 KE benchmark 复现；
+6. bottom-specific/random/shuffle intervention 支持碰撞可靠性解释。
 
-1. CREDIT-Engram 在 WikiBigEdit 50K/100K 的主指标上稳定优于 Semantic-RQ flatten；
-2. 稳定优于 head-factorized-no-credit，证明收益来自 credit assignment，而不只是改变融合方式；
-3. Semantic-CREDIT 优于 Shuffled-CREDIT，证明 semantic ordering 终于被模型利用；
-4. Locality 不以不可接受的幅度下降，且综合 Pareto 优于 LoRA/FT；
-5. 至少一个外部 benchmark 复现相同方向；
-6. gate–utility 对齐指标和 intervention 支持因果解释。
+10K 已达到效果门槛，但尚未达到 benchmark 覆盖门槛。
 
-建议预注册最小有效差异：WikiBigEdit 主指标相对 strongest matched Engram baseline 至少 +1.5 pp，三个 seed 方向一致，paired CI 排除 0。若只有 +0.2 pp 或只在单个 milestone 成立，不足以支撑 ICLR 方法论文。
+## 8. 四卡执行顺序
 
-### 7.1 冻结的 10K development gate
+### Phase A：方法开发与因果矩阵（完成）
 
-在 CREDIT 结果产生前，已有相同 Qwen3-1.7B、Qwen3-Embedding-4B、RQ M=8/K=16、seed 42、10K
-chronological milestone 的旧版 flatten 结果为：overall efficacy 55.47%、generalization 54.40%、locality
-44.89%；matched shuffled 为 54.65%、52.92%、44.90%。因此开发阶段不按结果临时改门槛：
+- 修复运行时 OOV 必须真实 embedding→RQ 的实现；
+- 修复多 seed 实际初始化相同的问题；
+- 完成地址审计、mass-preserving control、k sweep；
+- 完成 10K 四方法 × 三 seed。
 
-- CREDIT 的 overall generalization 至少达到 **55.90%**（相对 strongest matched flatten +1.5 pp）；
-- overall locality 不得低于 **44.39%**（相对 flatten 最多下降 0.5 pp）；
-- 必须同时优于新的 head-factorized-no-credit，排除收益仅来自投影重参数化；
-- Semantic-CREDIT 必须优于 Shuffled-CREDIT，排除 credit router 与 semantic code 无关；
-- 单 seed 10K 只用于冻结方法/超参。正式 claim 仍需 50K/100K、3 seeds 和 paired bootstrap CI。
+### Phase B：WikiBigEdit-50K（运行中）
 
-该 development gate 使用当前自建的 teacher-forced complete-target-token accuracy，只用于方法开发；不能替代
-WikiBigEdit 官方完整主表中的 Update、Rephrase、Locality、Personas、Multi-hop 和 retention。
+- GPU0/1/2：各固定一个 seed，顺序运行 Semantic flatten、Shuffled flatten、Shuffled aware、Semantic aware；
+- GPU3：Arithmetic 三 seed；
+- 共 15 个 50K 完整训练，每个评测 1K/5K/10K/50K checkpoint。
 
-## 8. 四张 A100 的执行计划
+### Phase C：100K 与外部 benchmark
 
-### Phase A：地址与共享审计（已完成 matched-50K；500K 运行中）
+- 构建严格匹配前 100K train split 的 RQ 表、specificity prior 与 evaluation cohorts；
+- 运行 100K 主方法三 seed；
+- 并行 CounterFact、ZsRE、Ripple/MQuAKE。
 
-matched-50K 已否定 ordered-depth；保留完整 prefix/head overlap、purity、collision 作为 diagnostic。500K 用于验证
-该负结论是否随 benchmark 规模稳定，不再作为 ordered architecture 的前置条件。
+### Phase D：机制、效率和尺度
 
-### Phase B：完整 10K 方法开发（约 4--8 GPU-days）
+- random/bottom-specific intervention；
+- query-level paired bootstrap 与 collision-load 分桶；
+- cold/warm latency、cache hit、throughput、CPU offload 和 memory footprint；
+- 至少增加一个 backbone 尺度或官方 WikiBigEdit backbone。
 
-四卡并行：flatten、head-factorized-no-credit、CREDIT、Shuffled-CREDIT。每个 run 都完整训练到 10K，并评官方
-全部指标；随后完成 `k`、null、read/write 与 route-credit 消融。
+## 9. 预期贡献
 
-### Phase C：50K/100K 主表（约 18--30 GPU-days）
+1. **问题发现**：semantic memory 的瓶颈不是能否制造共享，而是地址碰撞的可靠性高度不均；
+2. **方法贡献**：无需额外可训练 router，直接从冻结 semantic address table 导出 collision-aware sparse readout；
+3. **因果贡献**：用 Semantic/Shuffled × aware/flatten 的交互实验分离语义几何、共享容量和一般稀疏化；
+4. **实证贡献**：在大规模 lifelong editing、外部 KE benchmark 与干预实验中验证 transfer–interference Pareto；
+5. **系统贡献**：保留动态 OOV semantic encoding + persistent cache + offload，并如实报告冷/热路径成本。
 
-冻结所有超参后，主要 Engram 方法三 seed。四卡流水并行。昂贵的领域基线按官方建议规模运行并完整记录失败/不适用项。
+## 10. Reviewer 视角的主要风险
 
-### Phase D：外部 benchmark、模型尺度与机制（约 12--20 GPU-days）
+- **“只是 heuristic top-k”**：必须用 interaction、bottom/random intervention 和 load–error 分析证明 specificity 是地址
+  可靠性，而非任意剪枝。
+- **“只在一个 benchmark 有效”**：CounterFact/ZsRE/Ripple 至少一个必须复现。
+- **“baseline 不够”**：加入外部 lifelong KE 与 retrieval baseline；内部 ablation 不能替代领域 SOTA。
+- **“semantic encoder 成本太高”**：报告 cold/warm latency和 cache hit，不把首次 4B forward 隐藏为 O(1)。
+- **“训练表统计泄漏”**：统计严格只来自 train address table；评测 query 只查冻结 statistic。
+- **“RQ hierarchy 叙事过度”**：不再声称有序语义层级，方法只依赖可测量 collision load。
 
-CounterFact、ZsRE、Ripple；Qwen3-0.6B/4B 尺度；intervention、效率和 offload。
+目前最合理的论文核心已经从失败的 CREDIT/utility-gate 假设收敛为：
 
-保守总预算约 35--60 A100-40G GPU-days，即四卡连续约 9--15 天。实际预算必须在 Phase B 记录每个 run 的 wall time 后更新，不能用估算冒充测量。
-
-## 9. 投稿故事
-
-### 标题方向
-
-**Which Collisions Should Be Shared? Counterfactual Read-Write Routing for Conditional Memory**
-
-### 摘要核心
-
-现有 conditional memory 使用确定性地址检索静态模式，但地址 collision 与 memory utility 之间没有显式信用
-分配。我们首先在 50K lifelong edits、超过十万条配对 queries 上发现，semantic addressing 虽带来局部 prefix
-共享，却不能稳定区分有益 propagation 与有害 locality，且现有 flatten gate 无法给不同 heads 分配信用。
-CREDIT-Engram 将原始投影严格分解成参数匹配的逐 head read/write routes，并通过等激活预算的反事实 route
-pairs 监督真实 utility。在标准 lifelong knowledge editing、知识编辑与机制干预中，它应实现更好的
-transfer-retention-locality Pareto，同时保留冻结 backbone、可缓存地址与可 offload memory。
-
-### 预期贡献
-
-1. 诊断贡献：证明 conditional memory 中 address quality 与实际 route utility 的脱节；
-2. 方法贡献：parameter-matched head-factorized memory 与 counterfactual utility-supervised read/write routing；
-3. 实证贡献：标准 WikiBigEdit 大规模连续写入、标准 KE 外部验证和完整因果干预；
-4. 系统贡献：报告冷/热 semantic addressing 和 counterfactual training 的真实成本，而不把 memoized lookup误写成无条件 O(1)。
-
-## 10. 风险与止损
-
-- **RQ prefix 没有粗到细语义**：matched-50K 已确认；v2 已改成多个并行 heads，不再声称 hierarchy。
-- **credit loss 只提高训练集 efficacy**：检查 hard negatives、locality utility 与 gate calibration；若外部改写无增益，方法不成立。
-- **Semantic-CREDIT 仍等于 Shuffled-CREDIT**：说明当前 n-gram embedding 几何不适合 edit utility；论文应转为一般 utility-gated Engram，而不能把 semantic hash列为核心贡献。
-- **两倍训练代价过高**：降低 paired-example 比例并缓存 utility labels，但主表必须如实报告训练成本。
-- **领域 KE baseline 不兼容 Qwen3**：优先复用 WikiBigEdit 官方支持的 backbone/方法；不得用无法运行的名字装饰 baseline 表。
-
-这份计划的目标不是承诺一定得到正结果，而是让每个关键 claim 都对应标准 benchmark、严格对照和可证伪证据。只有通过成功门槛后，才把 CREDIT-Engram 定为最终投稿方法。
+> **Semantic hashing makes sharing possible; collision-aware addressing makes that sharing trustworthy.**
