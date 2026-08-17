@@ -78,6 +78,11 @@ for index in "${!TIMESTEPS[@]}"; do
   steps=$(( (actual + 19) / 20 ))
   cumulative=$(( cumulative + actual ))
   suffix="_wikibigedit_official_${MODE}_seed${SEED}_t${index}"
+  checkpoint="$OUT_ROOT/$MODE/seed_${SEED}/checkpoint_t${index}"
+  if [[ -e "$checkpoint" ]]; then
+    echo "refusing to overwrite existing official checkpoint: $checkpoint" >&2
+    exit 5
+  fi
   resume_args=()
   if [[ -n "$previous" ]]; then
     resume_args=(--resume_engram_weights "$previous")
@@ -88,12 +93,13 @@ for index in "${!TIMESTEPS[@]}"; do
     --max_steps "$steps" --batch_size 4 --grad_accum 5 --max_length 128 \
     --prompt_format qa --num_workers 4 --disable_early_stopping --seed "$SEED" \
     --methods "$METHOD" --run_suffix "$suffix" --skip_plot --skip_inference \
+    --engram_save_dir "$checkpoint" \
     "${resume_args[@]}"
-  previous="$(find outputs/benchmarks -mindepth 1 -maxdepth 1 -type d -name "ckpt_*${suffix}" | head -n 1)"
-  if [[ -z "$previous" ]]; then
+  if [[ ! -f "$checkpoint/engram_adapters.safetensors" ]]; then
     echo "checkpoint not found after timestep $index" >&2
-    exit 5
+    exit 6
   fi
+  previous="$checkpoint"
   checkpoints+=("$previous")
   printf '%s\n' "$previous" > "$OUT_ROOT/$MODE/seed_${SEED}/checkpoint_t${index}.txt"
 done
@@ -106,5 +112,6 @@ for index in "${!TIMESTEPS[@]}"; do
     --engram-weights "${checkpoints[$index]}" \
     --output "$OUT_ROOT/$MODE/seed_${SEED}/t${index}_at_${cumulative}.json" \
     --prompt-format qa --locality-mode pre_post_preservation \
+    --evaluation-cohort "${TIMESTEPS[$index]}" \
     --batch-size 16 --embed-batch-size 64
 done

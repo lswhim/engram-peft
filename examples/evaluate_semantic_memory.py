@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--geometry-cache", type=Path)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument(
+        "--evaluation-cohort",
+        help="Name of the trained-through WikiBigEdit timestep for retention audits.",
+    )
+    parser.add_argument(
         "--prompt-format",
         choices=("plain", "qa"),
         default="plain",
@@ -209,7 +213,8 @@ def main() -> None:
     for index,((case,query,_),score) in enumerate(zip(query_specs,query_scores,strict=True)):
         checks=condition_by_query[index]
         eligible=(all(checks) if query.get("condition","OR")=="AND" else any(checks)) if checks else True
-        rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity"),"cohort_origin":case.get("metadata",{}).get("cohort_origin"),"evaluated_at":case.get("metadata",{}).get("evaluated_at")})
+        metadata = case.get("metadata", {})
+        rows.append({"case_id":case["case_id"],"prompt":query["prompt"],"axis":query["axis"],"role":query["role"],"accuracy":score,"eligible":eligible,"lexical_similarity":query.get("lexical_similarity"),"cohort_origin":metadata.get("cohort_origin") or metadata.get("timestep"),"evaluated_at":args.evaluation_cohort or metadata.get("evaluated_at")})
     geometry_indices=[i for i,row in enumerate(rows) if row["axis"]=="unseen_template"]
     if geometry_indices:
         cached: dict[str, float] = {}
@@ -231,7 +236,7 @@ def main() -> None:
                 temporary=args.geometry_cache.with_suffix(".tmp")
                 temporary.write_text(json.dumps(cached),encoding="utf-8"); os.replace(temporary,args.geometry_cache)
         quartile_bins([rows[i] for i in geometry_indices])
-    payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"skipped_unscorable_queries":skipped_unscorable,"skipped_unscorable_conditions":skipped_conditions,"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","prompt_format":args.prompt_format,"locality_mode":args.locality_mode,"geometry_bins":"within-run quartiles"}}
+    payload={"status":"complete","cases":len(cases),"queries":len(rows),"eligible_queries":sum(row["eligible"] for row in rows),"skipped_unscorable_queries":skipped_unscorable,"skipped_unscorable_conditions":skipped_conditions,"metrics":aggregate(rows),"protocol":{"condition_gated":True,"score":"teacher_forced_complete_target_token_accuracy","prompt_format":args.prompt_format,"locality_mode":args.locality_mode,"evaluation_cohort":args.evaluation_cohort,"geometry_bins":"within-run quartiles"}}
     args.output.parent.mkdir(parents=True,exist_ok=True); samples=args.output.with_suffix(".jsonl")
     with samples.open("w",encoding="utf-8") as handle:
         for row in rows: handle.write(json.dumps(row,ensure_ascii=False)+"\n")

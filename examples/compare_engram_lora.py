@@ -75,6 +75,14 @@ def main() -> None:
         help="Continue an Engram adapter from a prior official timestep.",
     )
     parser.add_argument(
+        "--engram_save_dir",
+        type=str,
+        help=(
+            "Explicit final Engram checkpoint directory. Paper protocols should "
+            "use this instead of discovering a checkpoint with a filename glob."
+        ),
+    )
+    parser.add_argument(
         "--model_name",
         type=str,
         default="Qwen/Qwen3-1.7B",

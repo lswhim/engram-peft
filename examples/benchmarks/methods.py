@@ -398,7 +398,9 @@ def train_engram(
     # Standard runs restore the best checkpoint. Fixed-step paper runs disable
     # that path and deliberately save the exactly-max_steps final state.
     # Per-config save dir so a matrix (base x backend x seed) does not collide.
-    save_dir = f"outputs/benchmarks/ckpt_{run_tag}"
+    save_dir = getattr(args, "engram_save_dir", None) or (
+        f"outputs/benchmarks/ckpt_{run_tag}"
+    )
     model.save_pretrained(save_dir)
     print(f"[engram] saved checkpoint to {save_dir}")
     metrics["save_dir"] = save_dir

@@ -1,4 +1,4 @@
-from examples.evaluate_semantic_memory import formatted_pair, prediction_preservation
+from examples.evaluate_semantic_memory import aggregate, formatted_pair, prediction_preservation
 
 
 class CharacterTokenizer:
@@ -20,3 +20,21 @@ def test_qa_format_uses_official_question_answer_prefix() -> None:
 
 def test_locality_is_pre_post_prediction_preservation() -> None:
     assert prediction_preservation([1, 2, 3, 4], [1, 9, 3, 4]) == 0.75
+
+
+def test_aggregate_preserves_origin_timestep_for_forgetting_matrix() -> None:
+    rows = [
+        {
+            "axis": "efficacy",
+            "role": "should_propagate",
+            "accuracy": 0.75,
+            "eligible": True,
+            "cohort_origin": "wiki_big_edit_20240201_20240220",
+        }
+    ]
+
+    metrics = aggregate(rows)
+
+    assert metrics[
+        "cohort/wiki_big_edit_20240201_20240220/efficacy"
+    ] == {"mean": 0.75, "n": 1}
