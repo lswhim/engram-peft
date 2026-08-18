@@ -43,6 +43,12 @@ case "$MODE" in
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_signal,head_router_use_null=False,credit_loss_weight=0.0"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
+  semantic_rq_level_prior|semantic_context_topk)
+    TABLE="$SEMANTIC_TABLE"
+    if [[ "$MODE" == "semantic_rq_level_prior" ]]; then SELECTION="rq_level_prior"; else SELECTION="context"; fi
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=${SELECTION},head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
   semantic_flatten)
     TABLE="$SEMANTIC_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
@@ -62,6 +68,12 @@ case "$MODE" in
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_signal,head_router_use_null=False,credit_loss_weight=0.0"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
+  shuffled_rq_level_prior|shuffled_context_topk)
+    TABLE="$SHUFFLED_TABLE"
+    if [[ "$MODE" == "shuffled_rq_level_prior" ]]; then SELECTION="rq_level_prior"; else SELECTION="context"; fi
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=${SELECTION},head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
   shuffled_flatten)
     TABLE="$SHUFFLED_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
@@ -79,6 +91,12 @@ case "$MODE" in
   loadmatched_rq_signal)
     TABLE="$LOADMATCHED_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_signal,head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
+  loadmatched_rq_level_prior|loadmatched_context_topk)
+    TABLE="$LOADMATCHED_TABLE"
+    if [[ "$MODE" == "loadmatched_rq_level_prior" ]]; then SELECTION="rq_level_prior"; else SELECTION="context"; fi
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=${SELECTION},head_router_use_null=False,credit_loss_weight=0.0"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   loadmatched_flatten)

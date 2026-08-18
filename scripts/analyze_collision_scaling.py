@@ -32,6 +32,12 @@ DEFAULT_METHODS = (
     "semantic_rq_signal",
     "shuffled_rq_signal",
     "loadmatched_rq_signal",
+    "semantic_rq_level_prior",
+    "shuffled_rq_level_prior",
+    "loadmatched_rq_level_prior",
+    "semantic_context_topk",
+    "shuffled_context_topk",
+    "loadmatched_context_topk",
 )
 DEFAULT_PAIRS = (
     ("semantic_specificity", "semantic_flatten"),
@@ -53,6 +59,10 @@ DEFAULT_PAIRS = (
     ("semantic_rq_snr", "semantic_rq_signal"),
     ("semantic_rq_signal", "shuffled_rq_signal"),
     ("semantic_rq_signal", "loadmatched_rq_signal"),
+    ("semantic_rq_level_prior", "semantic_flatten"),
+    ("semantic_context_topk", "semantic_flatten"),
+    ("semantic_rq_snr", "semantic_rq_level_prior"),
+    ("semantic_rq_snr", "semantic_context_topk"),
 )
 DEFAULT_INTERACTIONS = (
     (
@@ -89,6 +99,30 @@ DEFAULT_INTERACTIONS = (
         "semantic_rq_signal",
         "semantic_flatten",
         "loadmatched_rq_signal",
+        "loadmatched_flatten",
+    ),
+    (
+        "semantic_rq_level_prior",
+        "semantic_flatten",
+        "shuffled_rq_level_prior",
+        "shuffled_flatten",
+    ),
+    (
+        "semantic_rq_level_prior",
+        "semantic_flatten",
+        "loadmatched_rq_level_prior",
+        "loadmatched_flatten",
+    ),
+    (
+        "semantic_context_topk",
+        "semantic_flatten",
+        "shuffled_context_topk",
+        "shuffled_flatten",
+    ),
+    (
+        "semantic_context_topk",
+        "semantic_flatten",
+        "loadmatched_context_topk",
         "loadmatched_flatten",
     ),
 )

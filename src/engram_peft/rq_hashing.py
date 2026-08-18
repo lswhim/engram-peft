@@ -158,6 +158,25 @@ class RQNgramMapping:
         ]
         return np.concatenate(rows, axis=0)
 
+    def residual_level_prior_table(self) -> np.ndarray:
+        """Return a bucket-invariant RQ level prior for fixed-top-k control."""
+        missing = [n for n in self.ngram_sizes if n not in self.residual_gains]
+        if missing:
+            raise FileNotFoundError(
+                "RQ level-prior routing requires residual gain artifacts; "
+                f"missing n-gram sizes {missing} in {self.table_dir}"
+            )
+        rows: list[np.ndarray] = []
+        for n in self.ngram_sizes:
+            positive = np.maximum(self.residual_gains[n], 0.0)
+            level_scores = np.log(positive.mean(axis=0).clip(min=1e-8))
+            rows.append(
+                np.repeat(level_scores[:, None], self.codebook_size, axis=1).astype(
+                    np.float32
+                )
+            )
+        return np.concatenate(rows, axis=0)
+
     def _poly_keys(self, ngrams: np.ndarray) -> np.ndarray:
         """[*, n] compressed-id windows -> [*] int64 poly keys (base-radix)."""
         k = np.zeros(ngrams.shape[:-1], dtype=np.int64)

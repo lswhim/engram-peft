@@ -45,6 +45,10 @@ def test_signal_to_interference_uses_residual_gain_artifact(tmp_path: Path) -> N
     signal = mapping.residual_signal_table()
     assert signal.shape == (2, 8)
     assert np.isfinite(signal).all()
+    prior = mapping.residual_level_prior_table()
+    assert prior.shape == (2, 8)
+    assert np.isfinite(prior).all()
+    np.testing.assert_allclose(prior[:, :1], prior)
 
 
 def test_signal_to_interference_requires_gain_artifact(tmp_path: Path) -> None:
