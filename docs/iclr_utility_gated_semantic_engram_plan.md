@@ -172,6 +172,14 @@ Arithmetic 三 seeds 已完成。50K Arithmetic 的 Efficacy/Generalization/Loca
 `[-0.957,+1.216]`。这支持 semantic ownership 对写入与改写泛化有贡献，但该随机化会改变 per-head marginal
 bucket loads，因此仍是 supporting control，不能替代 strict load-matched 归因。
 
+Runtime-randomized RQ + collision-aware 三 seeds 也已完成，50K 四轴为
+`57.278±0.030 / 53.959±0.101 / 46.142±0.168 / 39.913±0.732`。在随机地址内部，
+collision-aware − flatten 的逐 case hierarchical bootstrap 效应为：Efficacy `+1.407` pp，CI
+`[+1.006,+1.826]`；Generalization `+0.779` pp，CI `[+0.352,+1.212]`；Locality `−1.048` pp，
+CI `[−1.497,−0.595]`；Multi-hop `+0.480` pp，CI `[−1.241,+2.351]`。这表明低负载 head 选择本身
+能提高写入与改写泛化，但会显著损害 locality；因此论文不能把 routing 的全部收益归因于 semantic geometry，
+必须用四路 difference-in-differences 检验 semantic ownership 是否带来额外收益或缓和该 trade-off。
+
 ### 4.3 离线表覆盖与动态 OOV 审计
 
 对同一 50K chronological train stream 和固定 2,000-case evaluation manifest，按实际 tokenizer、`max_length=128`
