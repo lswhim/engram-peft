@@ -188,6 +188,29 @@ CI `[−0.399,+0.846]`；Multi-hop `+0.243` pp，CI `[−0.782,+1.327]`。这是
 semantic ownership 增益的积极 interim evidence，但正式主张必须等待 seeds 123/456，不能用单 seed
 CI 替代跨 seed 不确定性。
 
+### 4.2.1 50K 四路 interaction：负结果与方法修正
+
+Semantic/Runtime-randomized × specificity/flatten 的 50K 三-seed逐 case interaction 已完成。结果为：
+
+| Axis | Difference-in-differences (pp) | 95% CI |
+|---|---:|---:|
+| Efficacy | +0.426 | [−0.180,+1.024] |
+| Generalization | −0.096 | [−0.748,+0.564] |
+| Locality | +0.337 | [−0.386,+1.040] |
+| Multi-hop | −0.531 | [−2.757,+1.699] |
+
+四轴均不显著，因此 10K 的正 interaction 不具 scale stability。`-log(1+bucket load)` 只测碰撞数量，
+随机地址同样可以利用它；它应降级为**通用 capacity-control baseline**，不能作为最终 semantic-specific 方法。
+与此同时，Semantic-specificity 相对 Random-specificity 的 Efficacy/Generalization/Locality 仍显著为
+`+1.790/+1.788/+0.685` pp，CI 分别为 `[+1.298,+2.280]`、`[+1.301,+2.278]`、
+`[+0.196,+1.196]`，说明 semantic ownership 本身仍成立。
+
+下一方法迭代必须从 RQ 本身导出语义置信度。候选定义为每个 n-gram、每一级 RQ 的 residual-energy reduction
+（该 code 对 embedding 残差解释了多少）除以对应 bucket 的 collision load，形成单一的
+**semantic signal-to-interference** score；用它选择/加权 heads。该分数在 randomized code ownership 下失去
+对齐，因而能被严格 2×2 interaction 证伪或证实。只有新 score 在 50K 与官方 stream 上产生显著 interaction，
+collision-aware readout 才能成为论文方法贡献；否则最终论文应只保留 Semantic-RQ addressing。
+
 ### 4.3 离线表覆盖与动态 OOV 审计
 
 对同一 50K chronological train stream 和固定 2,000-case evaluation manifest，按实际 tokenizer、`max_length=128`
