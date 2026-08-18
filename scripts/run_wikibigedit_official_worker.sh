@@ -9,8 +9,8 @@ PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 TIMESTEP_DIR=data/semantic_memory/wikibigedit_official_timesteps
 FULL_MANIFEST=data/semantic_memory/wikibigedit_official_chronological.jsonl
-SEMANTIC_TABLE=rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16
-SHUFFLED_TABLE=rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16_runtime_shuffled_seed42
+SEMANTIC_TABLE=rq_tables/wikibigedit_official_t0_qwen3emb06b_M8K16
+SHUFFLED_TABLE=rq_tables/wikibigedit_official_t0_qwen3emb06b_M8K16_runtime_shuffled_seed42
 OUT_ROOT=outputs/semantic_memory/wikibigedit_official
 
 TIMESTEPS=(
