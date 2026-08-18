@@ -98,6 +98,12 @@ m_t=\sum_{j\in\mathcal I_t}a_{t,j}W^V_je_{t,j}.
 heads。Runtime-shuffled control 保留 codes/load，却切断 residual gain 与地址 ownership；若其 bucket score 退化为
 近似 level prior，而 Semantic 仍能动态选择 refinement，就构成方法机制的直接可证伪预测。
 
+对完整 50K train address stream 按真实 3-gram access frequency 加权，并以每个 3-gram 的精确 suffix key 配对
+2-gram 后，实际 top-4 选择支持该预测：Semantic 有 `91` 种 head sets、归一化选择熵 `0.842`，最大单一集合仅占
+`8.8%`；Runtime-shuffled 只剩 `2` 种、熵 `0.512`，`[0,1,2,8]` 单一集合占 `88.6%`；strict load-matched
+为 `66` 种、熵 `0.699`。三种地址的 2/3-gram level-0 选择率均为 `100%`，所以差异来自 conditional
+refinement，而非 coarse anchor 是否存在。该审计不使用语言模型 forward 或下游标签。
+
 旧的 `-log(1+load)` specificity 仍作为参数匹配 baseline：50K interaction 已证明它是通用 capacity control，
 不是 semantic-specific 方法。
 
