@@ -424,33 +424,29 @@ class SemanticKeyedGating(nn.Module):
         self.engram_hidden_size = self.num_heads * embedding_dim_per_head
         self.hidden_size = hidden_size
         self.hc_mult = hc_mult
-        self.router_dim = int(config.semantic_router_dim)
-        if self.router_dim <= 0:
-            raise ValueError("semantic_router_dim must be positive")
-
         self.register_buffer(
             "semantic_codebooks", codebooks.float(), persistent=False
         )
         rq_dim = int(codebooks.shape[-1])
-        self.centroid_proj = nn.Linear(rq_dim, self.router_dim, bias=False)
-        self.prefix_proj = nn.Linear(rq_dim, self.router_dim, bias=False)
-        self.tail_proj = nn.Linear(rq_dim, self.router_dim, bias=False)
-        self.head_embedding = nn.Embedding(self.num_heads, self.router_dim)
-        self.query_proj = nn.ModuleList(
+        self.semantic_proj = nn.Linear(
+            rq_dim, embedding_dim_per_head, bias=False
+        )
+        self.geometry_mix = nn.Parameter(torch.zeros(3))
+        self.head_embedding = nn.Embedding(
+            self.num_heads, embedding_dim_per_head
+        )
+        self.w_k = nn.ModuleList(
             [
-                nn.Linear(hidden_size, self.router_dim, bias=False)
+                nn.Linear(self.engram_hidden_size, hidden_size, bias=False)
                 for _ in range(hc_mult)
             ]
         )
         self.norm_h = nn.ModuleList(
             [nn.RMSNorm(hidden_size) for _ in range(hc_mult)]
         )
-        self.memory_strength = nn.ModuleList(
-            [nn.Linear(hidden_size, 1, bias=True) for _ in range(hc_mult)]
+        self.norm_k = nn.ModuleList(
+            [nn.RMSNorm(hidden_size) for _ in range(hc_mult)]
         )
-        for projection in self.memory_strength:
-            nn.init.zeros_(projection.weight)
-            nn.init.zeros_(projection.bias)
 
         self.w_v = nn.Linear(self.engram_hidden_size, hidden_size, bias=False)
         if zero_init:
@@ -500,19 +496,22 @@ class SemanticKeyedGating(nn.Module):
         ):
             raise ValueError("semantic-keyed memory embeddings have invalid shape")
         centroid, prefix, tail = self.semantic_descriptors(hash_indices)
-        centroid = centroid.to(dtype=embeddings.dtype)
-        prefix = prefix.to(dtype=embeddings.dtype)
-        tail = tail.to(dtype=embeddings.dtype)
+        centroid = centroid.to(device=embeddings.device, dtype=embeddings.dtype)
+        prefix = prefix.to(device=embeddings.device, dtype=embeddings.dtype)
+        tail = tail.to(device=embeddings.device, dtype=embeddings.dtype)
         head_ids = torch.arange(
             self.num_heads, device=embeddings.device
         )
-        semantic_key = (
-            self.centroid_proj(centroid)
-            + self.prefix_proj(prefix)
-            + self.tail_proj(tail)
+        mix = self.geometry_mix.softmax(dim=0).to(embeddings.dtype)
+        geometry = (
+            mix[0] * centroid
+            + mix[1] * prefix
+            + mix[2] * tail
+        )
+        semantic_embeddings = (
+            self.semantic_proj(geometry)
             + self.head_embedding(head_ids).view(1, 1, self.num_heads, -1)
         )
-        semantic_key = F.normalize(semantic_key.float(), dim=-1).to(embeddings.dtype)
 
         value_blocks = self.w_v.weight.view(
             self.hidden_size, self.num_heads, self.embedding_dim_per_head
@@ -522,19 +521,25 @@ class SemanticKeyedGating(nn.Module):
         logits: list[torch.Tensor] = []
         gates: list[torch.Tensor] = []
         for branch in range(self.hc_mult):
+            key_blocks = self.w_k[branch].weight.view(
+                self.hidden_size,
+                self.num_heads,
+                self.embedding_dim_per_head,
+            )
+            keys = torch.einsum(
+                "blhe,dhe->blhd", semantic_embeddings, key_blocks
+            )
+            normalized_keys = self.norm_k[branch](keys)
             normalized_hidden = self.norm_h[branch](
                 hidden_states[:, :, branch, :]
             )
-            query = F.normalize(
-                self.query_proj[branch](normalized_hidden).float(), dim=-1
-            ).to(embeddings.dtype)
-            score = torch.einsum("bld,blhd->blh", query, semantic_key)
-            score = score / (self.router_dim**0.5)
+            score = (
+                normalized_keys * normalized_hidden.unsqueeze(2)
+            ).sum(dim=-1)
+            score = score / (self.hidden_size**0.5)
+            score = score.abs().clamp_min(1e-6).sqrt() * score.sign()
             probability = score.softmax(dim=-1)
-            strength = (
-                self.memory_strength[branch](normalized_hidden).sigmoid()
-                * self.num_heads
-            )
+            strength = score.sigmoid().sum(dim=-1, keepdim=True)
             logits.append(score)
             gates.append(probability * strength)
 

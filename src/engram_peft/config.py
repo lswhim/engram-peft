@@ -218,12 +218,6 @@ class EngramConfig(PreTrainedConfig):
             "and trainable Engram rows only as values."
         },
     )
-    semantic_router_dim: int = field(
-        default=64,
-        metadata={
-            "help": "Internal query/key width of semantic_keyed RQ head routing."
-        },
-    )
     backbone_freeze_steps: int = field(
         default=0,
         metadata={
@@ -287,7 +281,6 @@ class EngramConfig(PreTrainedConfig):
         head_router_top_k: int = 0,
         head_router_preserve_mass: bool = False,
         head_router_selection: str = "learned",
-        semantic_router_dim: int = 64,
         backbone_freeze_steps: int = 0,
         engram_dtype: str | None = None,
         use_sparse_embeddings: bool = True,
@@ -333,7 +326,6 @@ class EngramConfig(PreTrainedConfig):
         self.head_router_top_k = head_router_top_k
         self.head_router_preserve_mass = head_router_preserve_mass
         self.head_router_selection = head_router_selection
-        self.semantic_router_dim = semantic_router_dim
         self.backbone_freeze_steps = backbone_freeze_steps
         self.engram_dtype = engram_dtype
         self.use_sparse_embeddings = use_sparse_embeddings

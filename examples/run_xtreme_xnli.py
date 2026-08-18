@@ -111,7 +111,6 @@ def _engram_config(args: argparse.Namespace, model: Any) -> EngramConfig:
             "memory_fusion": "head_factorized",
             "head_router_selection": "semantic_keyed",
             "head_router_top_k": 0,
-            "semantic_router_dim": 64,
         }
     else:
         raise ValueError(f"Unknown RQ router: {router}")

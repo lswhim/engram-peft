@@ -133,7 +133,6 @@ def test_router_config_round_trip() -> None:
 def test_semantic_keyed_descriptors_follow_rq_level_order() -> None:
     config = make_config(
         head_router_selection="semantic_keyed",
-        semantic_router_dim=4,
     )
     codebooks = torch.zeros(4, 3, 2)
     for head in range(4):
@@ -159,7 +158,6 @@ def test_semantic_keyed_routes_do_not_use_memory_values_as_keys() -> None:
     torch.manual_seed(19)
     config = make_config(
         head_router_selection="semantic_keyed",
-        semantic_router_dim=8,
     )
     routed = SemanticKeyedGating(
         config,
@@ -184,7 +182,6 @@ def test_semantic_keyed_routes_do_not_use_memory_values_as_keys() -> None:
 def test_semantic_keyed_router_and_values_receive_task_gradient() -> None:
     config = make_config(
         head_router_selection="semantic_keyed",
-        semantic_router_dim=8,
     )
     routed = SemanticKeyedGating(
         config,
@@ -201,7 +198,9 @@ def test_semantic_keyed_router_and_values_receive_task_gradient() -> None:
         torch.randint(0, 5, (2, 3, 4)),
     )
     output.square().mean().backward()
-    assert routed.centroid_proj.weight.grad is not None
-    assert torch.count_nonzero(routed.centroid_proj.weight.grad) > 0
+    assert routed.semantic_proj.weight.grad is not None
+    assert torch.count_nonzero(routed.semantic_proj.weight.grad) > 0
+    assert all(key.weight.grad is not None for key in routed.w_k)
+    assert all(torch.count_nonzero(key.weight.grad) > 0 for key in routed.w_k)
     assert routed.w_v.weight.grad is not None
     assert torch.count_nonzero(routed.w_v.weight.grad) > 0

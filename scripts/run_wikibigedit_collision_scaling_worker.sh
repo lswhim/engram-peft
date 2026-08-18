@@ -40,7 +40,7 @@ case "$MODE" in
     ;;
   semantic_keyed)
     TABLE="$SEMANTIC_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed,semantic_router_dim=64"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   semantic_flatten)
@@ -59,7 +59,7 @@ case "$MODE" in
     ;;
   shuffled_semantic_keyed)
     TABLE="$SHUFFLED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed,semantic_router_dim=64"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   shuffled_flatten)
@@ -78,7 +78,7 @@ case "$MODE" in
     ;;
   loadmatched_semantic_keyed)
     TABLE="$LOADMATCHED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed,semantic_router_dim=64"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   loadmatched_flatten)
