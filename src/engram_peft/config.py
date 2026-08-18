@@ -213,7 +213,8 @@ class EngramConfig(PreTrainedConfig):
         metadata={
             "help": "Score used to select sparse memory heads: 'context' uses the "
             "learned Engram route logits; 'specificity' uses inverse collision load; "
-            "'rq_snr' uses RQ residual-energy signal per collision. Gate amplitudes "
+            "'rq_snr' uses RQ residual-energy signal per collision; 'rq_signal' "
+            "ablates the collision penalty and uses residual signal alone. Gate amplitudes "
             "remain context-derived."
         },
     )

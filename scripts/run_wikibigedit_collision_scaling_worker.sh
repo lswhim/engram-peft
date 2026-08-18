@@ -38,6 +38,11 @@ case "$MODE" in
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_snr,head_router_use_null=False,credit_loss_weight=0.0"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
+  semantic_rq_signal)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_signal,head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
   semantic_flatten)
     TABLE="$SEMANTIC_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
@@ -52,6 +57,11 @@ case "$MODE" in
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_snr,head_router_use_null=False,credit_loss_weight=0.0"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
+  shuffled_rq_signal)
+    TABLE="$SHUFFLED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_signal,head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
   shuffled_flatten)
     TABLE="$SHUFFLED_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
@@ -64,6 +74,11 @@ case "$MODE" in
   loadmatched_rq_snr)
     TABLE="$LOADMATCHED_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_snr,head_router_use_null=False,credit_loss_weight=0.0"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
+  loadmatched_rq_signal)
+    TABLE="$LOADMATCHED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=rq_signal,head_router_use_null=False,credit_loss_weight=0.0"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   loadmatched_flatten)

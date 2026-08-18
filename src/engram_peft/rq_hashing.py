@@ -32,7 +32,10 @@ from typing import Any
 
 import numpy as np
 
-from engram_peft.rq_table_tools import bucket_signal_to_interference
+from engram_peft.rq_table_tools import (
+    bucket_residual_signal,
+    bucket_signal_to_interference,
+)
 
 @dataclass
 class RQNgramMapping:
@@ -133,6 +136,22 @@ class RQNgramMapping:
             )
         rows = [
             bucket_signal_to_interference(
+                self.codes[n], self.residual_gains[n], self.codebook_size
+            )
+            for n in self.ngram_sizes
+        ]
+        return np.concatenate(rows, axis=0)
+
+    def residual_signal_table(self) -> np.ndarray:
+        """Return [total_heads, K] residual signal without collision penalty."""
+        missing = [n for n in self.ngram_sizes if n not in self.residual_gains]
+        if missing:
+            raise FileNotFoundError(
+                "RQ residual-signal routing requires residual gain artifacts; "
+                f"missing n-gram sizes {missing} in {self.table_dir}"
+            )
+        rows = [
+            bucket_residual_signal(
                 self.codes[n], self.residual_gains[n], self.codebook_size
             )
             for n in self.ngram_sizes

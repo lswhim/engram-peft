@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from engram_peft.rq_table_tools import (
+    bucket_residual_signal,
     bucket_signal_to_interference,
     frequency_matched_codes,
     residual_energy_gains,
@@ -45,6 +46,15 @@ def test_bucket_snr_preserves_absolute_rq_level_strength() -> None:
     # residual energy must remain globally preferable.  A per-level z-score
     # would incorrectly make the two levels indistinguishable here.
     assert np.all(scores[0] > scores[1])
+
+
+def test_residual_signal_ablation_does_not_penalize_bucket_load() -> None:
+    codes = np.asarray([[0], [0], [1]], dtype=np.uint16)
+    gains = np.asarray([[0.4], [0.4], [0.4]], dtype=np.float32)
+    signal = bucket_residual_signal(codes, gains, codebook_size=2)
+    snr = bucket_signal_to_interference(codes, gains, codebook_size=2)
+    np.testing.assert_allclose(signal[0, 0], signal[0, 1], rtol=1e-6)
+    assert snr[0, 0] < snr[0, 1]
 
 
 def test_shuffled_codes_preserves_level_histograms_and_joint_rows() -> None:

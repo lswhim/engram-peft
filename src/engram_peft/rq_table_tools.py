@@ -74,6 +74,30 @@ def bucket_signal_to_interference(
     return scores
 
 
+def bucket_residual_signal(
+    codes: NDArray[np.integer[Any]],
+    residual_gains: NDArray[np.floating[Any]],
+    codebook_size: int,
+) -> NDArray[np.float32]:
+    """Return absolute per-level/bucket log residual signal without load penalty."""
+    if codes.shape != residual_gains.shape or codes.ndim != 2:
+        raise ValueError("codes and residual_gains must have the same rank-2 shape")
+    if codebook_size <= 0:
+        raise ValueError("codebook_size must be positive")
+    levels = codes.shape[1]
+    scores = np.empty((levels, codebook_size), dtype=np.float32)
+    positive = np.maximum(np.asarray(residual_gains, dtype=np.float32), 0.0)
+    for level in range(levels):
+        ids = codes[:, level].astype(np.int64)
+        counts = np.bincount(ids, minlength=codebook_size).astype(np.float32)
+        signal_sum = np.bincount(
+            ids, weights=positive[:, level], minlength=codebook_size
+        ).astype(np.float32)
+        mean_signal = signal_sum / np.maximum(counts, 1.0)
+        scores[level] = np.log(mean_signal.clip(min=1e-8))
+    return scores
+
+
 def shuffled_row_indices(row_count: int, seed: int) -> NDArray[np.int64]:
     """Return a deterministic row permutation for an RQ code matrix."""
     if row_count < 0:

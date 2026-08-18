@@ -365,7 +365,7 @@ class HeadFactorizedGating(nn.Module):
                 )
                 if selection == "context":
                     selection_logits = route_logits
-                elif selection in {"specificity", "rq_snr"}:
+                elif selection in {"specificity", "rq_snr", "rq_signal"}:
                     if head_selection_scores is None:
                         raise ValueError(
                             f"head_router_selection={selection!r} requires per-address scores"
@@ -382,7 +382,7 @@ class HeadFactorizedGating(nn.Module):
                     )[:, :, None, :].expand_as(route_logits)
                 else:
                     raise ValueError(
-                        "head_router_selection must be 'context', 'specificity', or 'rq_snr', "
+                        "head_router_selection must be 'context', 'specificity', 'rq_snr', or 'rq_signal', "
                         f"got {selection!r}"
                     )
                 indices = selection_logits.topk(top_k, dim=-1).indices
@@ -677,7 +677,7 @@ class EngramLayer(nn.Module):
                     hc_mult=self.num_branches,
                     zero_init=config.gating_zero_init,
                 )
-                if config.head_router_selection in {"specificity", "rq_snr"}:
+                if config.head_router_selection in {"specificity", "rq_snr", "rq_signal"}:
                     if config.hash_backend != "rq":
                         raise ValueError(
                             "address-score head selection currently requires hash_backend='rq'"
@@ -689,6 +689,8 @@ class EngramLayer(nn.Module):
                     rq_mapping = RQNgramMapping(config.rq_table_dir)
                     if config.head_router_selection == "rq_snr":
                         score_array = rq_mapping.signal_to_interference_table()
+                    elif config.head_router_selection == "rq_signal":
+                        score_array = rq_mapping.residual_signal_table()
                     else:
                         rows: list[np.ndarray] = []
                         for n in rq_mapping.ngram_sizes:
