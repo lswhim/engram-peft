@@ -26,6 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tables", nargs="+", type=Path, required=True)
     parser.add_argument("--access-counts", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=4)
+    parser.add_argument(
+        "--score", choices=("rq_snr", "rq_signal"), default="rq_snr"
+    )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -42,7 +45,10 @@ def weighted_entropy(weights: dict[tuple[int, ...], float]) -> float:
 
 
 def audit_table(
-    table_dir: Path, access_counts: np.lib.npyio.NpzFile, top_k: int
+    table_dir: Path,
+    access_counts: np.lib.npyio.NpzFile,
+    top_k: int,
+    score_name: str,
 ) -> dict[str, Any]:
     mapping = RQNgramMapping(str(table_dir))
     if mapping.ngram_sizes != [2, 3]:
@@ -63,7 +69,12 @@ def audit_table(
     codes = np.concatenate(
         [mapping.codes[2][row_2], mapping.codes[3][row_3]], axis=1
     )
-    score_table = mapping.signal_to_interference_table()
+    if score_name == "rq_snr":
+        score_table = mapping.signal_to_interference_table()
+    elif score_name == "rq_signal":
+        score_table = mapping.residual_signal_table()
+    else:
+        raise ValueError(f"unknown score: {score_name}")
     scores = np.take_along_axis(score_table[None, :, :], codes[:, :, None], axis=2)[
         :, :, 0
     ]
@@ -99,6 +110,7 @@ def audit_table(
         "positive_access_rows": int(positive.sum()),
         "weighted_accesses": total_weight,
         "top_k": top_k,
+        "score": score_name,
         "distinct_selected_head_sets": len(set_mass),
         "selected_set_entropy_nats": weighted_entropy(set_mass),
         "selected_set_entropy_normalized": normalized_entropy,
@@ -125,10 +137,12 @@ def main() -> None:
                 "unit": "known train 3-gram paired with exact suffix 2-gram",
                 "weight": "train 3-gram access frequency",
                 "top_k": args.top_k,
+                "score": args.score,
                 "no_model_forward": True,
             },
             "tables": [
-                audit_table(table, access_counts, args.top_k) for table in args.tables
+                audit_table(table, access_counts, args.top_k, args.score)
+                for table in args.tables
             ],
         }
     args.output.parent.mkdir(parents=True, exist_ok=True)
