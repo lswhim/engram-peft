@@ -246,157 +246,6 @@ class ContextAwareGating(nn.Module):
 
 
 @final
-class HeadFactorizedGating(nn.Module):
-    """Parameter-matched per-head alternative to flattened Engram gating.
-
-    ``w_v`` and every ``w_k`` have exactly the same shapes as the original
-    :class:`ContextAwareGating`.  Their input dimensions are interpreted as contiguous
-    head blocks, so ``W @ concat(e_h) == sum_h W_h @ e_h``.  This exposes one route
-    score per memory head without adding a second value network.
-    """
-
-    def __init__(
-        self,
-        config: EngramConfig,
-        num_heads: int,
-        embedding_dim_per_head: int,
-        hidden_size: int,
-        hc_mult: int = 4,
-        zero_init: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(**kwargs)
-        self.config = config
-        self.num_heads = num_heads
-        self.embedding_dim_per_head = embedding_dim_per_head
-        self.engram_hidden_size = num_heads * embedding_dim_per_head
-        self.hidden_size = hidden_size
-        self.hc_mult = hc_mult
-
-        self.w_v = nn.Linear(self.engram_hidden_size, hidden_size, bias=False)
-        if zero_init:
-            nn.init.zeros_(self.w_v.weight)
-        self.w_k = nn.ModuleList(
-            [
-                nn.Linear(self.engram_hidden_size, hidden_size, bias=False)
-                for _ in range(hc_mult)
-            ]
-        )
-        self.norm_h = nn.ModuleList([nn.RMSNorm(hidden_size) for _ in range(hc_mult)])
-        self.norm_k = nn.ModuleList([nn.RMSNorm(hidden_size) for _ in range(hc_mult)])
-        self.last_gate: torch.Tensor | None = None
-        self.last_route_logits: torch.Tensor | None = None
-        self.last_entropy = 0.0
-        self.gating_entropy = torch.tensor(0.0)
-
-    @override
-    def forward(
-        self,
-        embeddings: Float[torch.Tensor, "batch seq heads head_dim"],
-        hidden_states: Float[torch.Tensor, "batch seq hc_mult hidden_dim"],
-        head_selection_scores: Float[torch.Tensor, "batch seq heads"] | None = None,
-    ) -> Float[torch.Tensor, "batch seq hc_mult hidden_dim"]:
-        if embeddings.shape[-2:] != (
-            self.num_heads,
-            self.embedding_dim_per_head,
-        ):
-            raise ValueError(
-                "head-factorized embeddings have incompatible shape: "
-                f"expected (..., {self.num_heads}, {self.embedding_dim_per_head}), "
-                f"got {tuple(embeddings.shape)}"
-            )
-
-        value_blocks = self.w_v.weight.view(
-            self.hidden_size, self.num_heads, self.embedding_dim_per_head
-        )
-        # [B,L,H,E] x [D,H,E] -> [B,L,H,D]
-        values = torch.einsum("blhe,dhe->blhd", embeddings, value_blocks)
-
-        branch_logits: list[torch.Tensor] = []
-        for branch in range(self.hc_mult):
-            key_blocks = self.w_k[branch].weight.view(
-                self.hidden_size, self.num_heads, self.embedding_dim_per_head
-            )
-            keys = torch.einsum("blhe,dhe->blhd", embeddings, key_blocks)
-            normed_keys = self.norm_k[branch](keys)
-            query = self.norm_h[branch](hidden_states[:, :, branch, :])
-            score = (normed_keys * query.unsqueeze(2)).sum(dim=-1)
-            score = score / (self.hidden_size**0.5)
-            score = score.abs().clamp_min(1e-6).sqrt() * score.sign()
-            branch_logits.append(score)
-
-        route_logits = torch.stack(branch_logits, dim=2)  # [B,L,M,H]
-        dense_gate = route_logits.sigmoid()
-        selection = str(getattr(self.config, "head_router_selection", "learned"))
-        if selection == "learned":
-            # Fully differentiable competition: task loss decides which retrieved
-            # RQ heads matter for this token.  Preserve the original dense gate mass
-            # so gains cannot come from merely weakening the memory residual.
-            route_probability = route_logits.softmax(dim=-1)
-            gate = route_probability * dense_gate.sum(dim=-1, keepdim=True)
-            entropy_probability = route_probability.clamp_min(1e-8)
-            self.gating_entropy = -(
-                entropy_probability * entropy_probability.log()
-            ).sum(dim=-1).mean()
-        elif selection == "specificity":
-            gate = dense_gate
-            top_k = int(getattr(self.config, "head_router_top_k", 0) or 0)
-            if not 0 < top_k < self.num_heads:
-                raise ValueError(
-                    "specificity routing requires head_router_top_k in "
-                    f"[1, {self.num_heads - 1}], got {top_k}"
-                )
-            if head_selection_scores is None:
-                raise ValueError(
-                    "head_router_selection='specificity' requires per-address scores"
-                )
-            if head_selection_scores.shape != route_logits.shape[:2] + (
-                self.num_heads,
-            ):
-                raise ValueError(
-                    "head selection scores must be [B,L,H]; got "
-                    f"{tuple(head_selection_scores.shape)}"
-                )
-            selection_logits = head_selection_scores.to(
-                device=route_logits.device, dtype=route_logits.dtype
-            )[:, :, None, :].expand_as(route_logits)
-            indices = selection_logits.topk(top_k, dim=-1).indices
-            hard_mask = torch.zeros_like(gate).scatter_(-1, indices, 1.0)
-            gate = gate * hard_mask
-            probability = route_logits.sigmoid().clamp(1e-6, 1 - 1e-6)
-            self.gating_entropy = -(
-                probability * probability.log()
-                + (1 - probability) * (1 - probability).log()
-            ).mean()
-        else:
-            raise ValueError(
-                "head_router_selection must be 'learned' or 'specificity', "
-                f"got {selection!r}"
-            )
-
-        if bool(getattr(self.config, "head_router_preserve_mass", False)):
-            # Sparse collision routing must change which heads contribute, not
-            # silently reduce memory strength by k/H.
-            selected_mass = gate.sum(dim=-1, keepdim=True)
-            dense_mass = dense_gate.sum(dim=-1, keepdim=True)
-            scale = torch.where(
-                selected_mass > 0,
-                dense_mass / selected_mass.clamp_min(1e-6),
-                torch.zeros_like(selected_mass),
-            ).detach()
-            gate = gate * scale
-
-        self.last_route_logits = route_logits
-        self.last_gate = gate.detach()
-        if self.config.enable_telemetry:
-            self.last_entropy = self.gating_entropy.item()
-
-        # One independently gated contribution per head, summed without changing the
-        # downstream ShortConv interface [B,L,M,D].
-        return torch.einsum("blmh,blhd->blmd", gate, values)
-
-
-@final
 class SemanticKeyedGating(nn.Module):
     """Use frozen RQ geometry as keys and trainable Engram rows as values."""
 
@@ -631,15 +480,8 @@ class EngramLayer(nn.Module):
     embedding_dim_per_head: int
     hash_mapping: FixedNgramHashMapping | NgramHashMapping
     multi_head_embedding: MultiHeadEmbedding
-    gating: ContextAwareGating | HeadFactorizedGating | SemanticKeyedGating
+    gating: ContextAwareGating | SemanticKeyedGating
     short_conv: ShortConv
-    rq_multi_head_embedding: MultiHeadEmbedding | None
-    arith_multi_head_embedding: MultiHeadEmbedding | None
-    rq_gating: ContextAwareGating | None
-    arith_gating: ContextAwareGating | None
-    rq_short_conv: ShortConv | None
-    arith_short_conv: ShortConv | None
-    fusion_gate: nn.Sequential | None
     last_norm_ratio: float
 
     def __init__(
@@ -707,173 +549,54 @@ class EngramLayer(nn.Module):
             seed=config.seed,
         )
 
-        self.rq_multi_head_embedding = None
-        self.arith_multi_head_embedding = None
-        self.rq_gating = None
-        self.arith_gating = None
-        self.rq_short_conv = None
-        self.arith_short_conv = None
-        self.fusion_gate = None
-        self.register_buffer("rq_bucket_specificity", None, persistent=False)
+        # 1. MultiHeadEmbedding
+        self.multi_head_embedding = MultiHeadEmbedding(
+            primes=primes,
+            embedding_dim_per_head=self.embedding_dim_per_head,
+            sparse=config.use_sparse_embeddings,
+        )
 
-        if config.hash_backend == "mixed_v2":
-            n_sizes = len(self.ngram_sizes)
-            r = config.n_rq_levels_used
-            a = config.n_arith_heads_per_ngram
-            rq_primes: list[int] = []
-            arith_primes: list[int] = []
-            pos = 0
-            for _ in range(n_sizes):
-                rq_primes += primes[pos : pos + r]
-                pos += r
-                arith_primes += primes[pos : pos + a]
-                pos += a
-            rq_embedding_dim_per_head = self.total_embedding_dim // (n_sizes * r)
-            arith_embedding_dim_per_head = self.total_embedding_dim // (n_sizes * a)
-
-            self.rq_multi_head_embedding = MultiHeadEmbedding(
-                primes=rq_primes,
-                embedding_dim_per_head=rq_embedding_dim_per_head,
-                sparse=config.use_sparse_embeddings,
-            )
-            self.arith_multi_head_embedding = MultiHeadEmbedding(
-                primes=arith_primes,
-                embedding_dim_per_head=arith_embedding_dim_per_head,
-                sparse=config.use_sparse_embeddings,
-            )
-            self.rq_gating = ContextAwareGating(
+        # 2. Gating
+        if config.memory_fusion == "flatten":
+            self.gating = ContextAwareGating(
                 config=config,
                 engram_hidden_size=self.total_embedding_dim,
                 hidden_size=self.hidden_dim,
                 hc_mult=self.num_branches,
                 zero_init=config.gating_zero_init,
             )
-            self.arith_gating = ContextAwareGating(
-                config=config,
-                engram_hidden_size=self.total_embedding_dim,
-                hidden_size=self.hidden_dim,
-                hc_mult=self.num_branches,
-                zero_init=config.gating_zero_init,
-            )
-            self.rq_short_conv = ShortConv(
-                hidden_size=self.hidden_dim,
-                kernel_size=self.kernel_size,
-                dilation=self.dilation,
-                hc_mult=self.num_branches,
-                activation=True,
-                zero_init=config.conv_zero_init,
-            )
-            self.arith_short_conv = ShortConv(
-                hidden_size=self.hidden_dim,
-                kernel_size=self.kernel_size,
-                dilation=self.dilation,
-                hc_mult=self.num_branches,
-                activation=True,
-                zero_init=config.conv_zero_init,
-            )
-            self.fusion_gate = nn.Sequential(
-                nn.RMSNorm(self.hidden_dim),
-                nn.Linear(self.hidden_dim, 1),
-            )
-            fusion_linear = self.fusion_gate[1]
-            assert isinstance(fusion_linear, nn.Linear)
-            nn.init.zeros_(fusion_linear.weight)
-            nn.init.zeros_(fusion_linear.bias)
-
-            # Kept for compatibility with code that expects these attributes.
-            self.multi_head_embedding = self.rq_multi_head_embedding
-            self.gating = self.rq_gating
-            self.short_conv = self.rq_short_conv
-        else:
-            # 1. MultiHeadEmbedding
-            self.multi_head_embedding = MultiHeadEmbedding(
-                primes=primes,
-                embedding_dim_per_head=self.embedding_dim_per_head,
-                sparse=config.use_sparse_embeddings,
-            )
-
-            # 2. Context-Aware Gating
-            if config.memory_fusion == "flatten":
-                self.gating = ContextAwareGating(
-                    config=config,
-                    engram_hidden_size=self.total_embedding_dim,
-                    hidden_size=self.hidden_dim,
-                    hc_mult=self.num_branches,
-                    zero_init=config.gating_zero_init,
-                )
-            elif config.memory_fusion == "head_factorized":
-                if config.head_router_selection == "semantic_keyed":
-                    if config.hash_backend != "rq" or not config.rq_table_dir:
-                        raise ValueError(
-                            "semantic_keyed routing requires hash_backend='rq' "
-                            "and rq_table_dir"
-                        )
-                    rq_mapping = RQNgramMapping(config.rq_table_dir)
-                    codebooks = torch.from_numpy(
-                        rq_mapping.centroid_codebooks()
-                    )
-                    self.gating = SemanticKeyedGating(
-                        config=config,
-                        codebooks=codebooks,
-                        num_levels=rq_mapping.num_levels,
-                        embedding_dim_per_head=self.embedding_dim_per_head,
-                        hidden_size=self.hidden_dim,
-                        hc_mult=self.num_branches,
-                        zero_init=config.gating_zero_init,
-                    )
-                else:
-                    self.gating = HeadFactorizedGating(
-                        config=config,
-                        num_heads=len(primes),
-                        embedding_dim_per_head=self.embedding_dim_per_head,
-                        hidden_size=self.hidden_dim,
-                        hc_mult=self.num_branches,
-                        zero_init=config.gating_zero_init,
-                    )
-                if config.head_router_selection == "specificity":
-                    if config.hash_backend != "rq":
-                        raise ValueError(
-                            "address-score head selection currently requires hash_backend='rq'"
-                        )
-                    if not config.rq_table_dir:
-                        raise ValueError(
-                            "address-score head selection requires rq_table_dir"
-                        )
-                    rq_mapping = RQNgramMapping(config.rq_table_dir)
-                    rows: list[np.ndarray] = []
-                    for n in rq_mapping.ngram_sizes:
-                        codes = rq_mapping.codes[n]
-                        for level in range(rq_mapping.num_levels):
-                            counts = np.bincount(
-                                codes[:, level], minlength=rq_mapping.codebook_size
-                            ).astype(np.float32)
-                            # Collision-aware baseline: prefer less loaded buckets.
-                            score = -np.log1p(counts)
-                            score = (score - score.mean()) / (score.std() + 1e-6)
-                            rows.append(score)
-                    score_array = np.stack(rows)
-                    specificity = torch.from_numpy(score_array).float()
-                    if specificity.shape != (len(primes), max(primes)):
-                        raise ValueError(
-                            "RQ specificity table shape does not match memory heads: "
-                            f"{tuple(specificity.shape)} vs {(len(primes), max(primes))}"
-                        )
-                    self.rq_bucket_specificity = specificity
-            else:
+        elif config.memory_fusion == "head_factorized":
+            if config.hash_backend != "rq" or not config.rq_table_dir:
                 raise ValueError(
-                    "memory_fusion must be 'flatten' or 'head_factorized', "
-                    f"got {config.memory_fusion!r}"
+                    "semantic_keyed routing requires hash_backend='rq' "
+                    "and rq_table_dir"
                 )
-
-            # 3. ShortConv
-            self.short_conv = ShortConv(
+            rq_mapping = RQNgramMapping(config.rq_table_dir)
+            codebooks = torch.from_numpy(rq_mapping.centroid_codebooks())
+            self.gating = SemanticKeyedGating(
+                config=config,
+                codebooks=codebooks,
+                num_levels=rq_mapping.num_levels,
+                embedding_dim_per_head=self.embedding_dim_per_head,
                 hidden_size=self.hidden_dim,
-                kernel_size=self.kernel_size,
-                dilation=self.dilation,
                 hc_mult=self.num_branches,
-                activation=True,
-                zero_init=config.conv_zero_init,
+                zero_init=config.gating_zero_init,
             )
+        else:
+            raise ValueError(
+                "memory_fusion must be 'flatten' or 'head_factorized', "
+                f"got {config.memory_fusion!r}"
+            )
+
+        # 3. ShortConv
+        self.short_conv = ShortConv(
+            hidden_size=self.hidden_dim,
+            kernel_size=self.kernel_size,
+            dilation=self.dilation,
+            hc_mult=self.num_branches,
+            activation=True,
+            zero_init=config.conv_zero_init,
+        )
         self.last_norm_ratio = 0.0  # Default to zero
 
     @property
@@ -944,67 +667,11 @@ class EngramLayer(nn.Module):
         else:
             hidden_states_m = hidden_states
 
-        if self.config.hash_backend == "mixed_v2":
-            if not isinstance(engram_hash_indices, dict):
-                raise ValueError("mixed_v2 expects {'rq': ..., 'arith': ...} hash indices")
-            assert self.rq_multi_head_embedding is not None
-            assert self.arith_multi_head_embedding is not None
-            assert self.rq_gating is not None
-            assert self.arith_gating is not None
-            assert self.rq_short_conv is not None
-            assert self.arith_short_conv is not None
-            assert self.fusion_gate is not None
-
-            rq_embeddings = self.rq_multi_head_embedding(
-                engram_hash_indices["rq"]
-            ).flatten(start_dim=-2)
-            arith_embeddings = self.arith_multi_head_embedding(
-                engram_hash_indices["arith"]
-            ).flatten(start_dim=-2)
-
-            y_rq = self.rq_short_conv(self.rq_gating(rq_embeddings, hidden_states_m))
-            y_arith = self.arith_short_conv(
-                self.arith_gating(arith_embeddings, hidden_states_m)
-            )
-
-            gate_source = hidden_states if is_3d else hidden_states_m.mean(dim=2)
-            fusion = torch.sigmoid(self.fusion_gate(gate_source)).unsqueeze(2)
-            y = fusion * y_rq + (1.0 - fusion) * y_arith
-
-            if is_3d:
-                if self.num_branches == 1:
-                    y = y.squeeze(2)
-                else:
-                    y = y.sum(dim=2)
-
-            if self.config.enable_telemetry:
-                with torch.no_grad():
-                    y_norm = cast(
-                        "torch.Tensor", torch.linalg.vector_norm(y.float(), ord=2)
-                    )
-                    h_norm = cast(
-                        "torch.Tensor",
-                        torch.linalg.vector_norm(hidden_states.float(), ord=2),
-                    )
-                    self.last_norm_ratio = (y_norm / (h_norm + 1e-6)).item()
-
-            return (hidden_states + y).to(hidden_states.dtype)
-
         # Step 4: Context-Aware Gating modulation
-        # Step 1: Retrieve vectors.  The reference fusion flattens heads; CREDIT keeps
-        # the head axis to expose independently routable, parameter-matched blocks.
+        # Step 1: Retrieve vectors.
         all_embeddings = self.multi_head_embedding(engram_hash_indices)
-        selection_scores = None
-        if isinstance(self.gating, (HeadFactorizedGating, SemanticKeyedGating)):
+        if isinstance(self.gating, SemanticKeyedGating):
             e_t = all_embeddings.to(hidden_states.device)
-            if self.rq_bucket_specificity is not None:
-                score_table = self.rq_bucket_specificity.to(
-                    device=engram_hash_indices.device
-                )
-                head_ids = torch.arange(
-                    engram_hash_indices.shape[-1], device=engram_hash_indices.device
-                ).view(1, 1, -1)
-                selection_scores = score_table[head_ids, engram_hash_indices]
         else:
             e_t = all_embeddings.flatten(start_dim=-2).to(hidden_states.device)
 
@@ -1015,10 +682,6 @@ class EngramLayer(nn.Module):
                 e_t,
                 hidden_states_m,
                 hash_indices=engram_hash_indices,
-            )
-        elif isinstance(self.gating, HeadFactorizedGating):
-            gated_value = self.gating(
-                e_t, hidden_states_m, head_selection_scores=selection_scores
             )
         else:
             gated_value = self.gating(e_t, hidden_states_m)

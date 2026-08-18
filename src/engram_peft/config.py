@@ -139,14 +139,12 @@ class EngramConfig(PreTrainedConfig):
         metadata={
             "help": "Address backend: 'arithmetic' (original XOR-multiply hash), "
             + "'arithmetic_fixed' (exact equal-K arithmetic control), "
-            + "'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py), "
-            + "'mixed' (per-head split: n_rq_levels_used RQ + n_arith_heads_per_ngram arith), "
-            + "or 'mixed_v2' (separate RQ/arith branches fused by a token-level gate)."
+            + "or 'rq' (frozen offline RQ semantic-hash table, see scripts/build_rq_table.py)."
         },
     )
     rq_table_dir: str | None = field(
         default=None,
-        metadata={"help": "Path to the prebuilt RQ table dir (required if hash_backend in {'rq','mixed'})."},
+        metadata={"help": "Path to the prebuilt RQ table dir (required if hash_backend='rq')."},
     )
     rq_cache_dir: str | None = field(
         default=None,
@@ -162,14 +160,6 @@ class EngramConfig(PreTrainedConfig):
     rq_embed_batch_size: int = field(
         default=256,
         metadata={"help": "Unique cache misses per frozen semantic-encoder batch."},
-    )
-    n_rq_levels_used: int = field(
-        default=4,
-        metadata={"help": "Mixed-hash: how many of the RQ table's M levels to use per n-gram size."},
-    )
-    n_arith_heads_per_ngram: int = field(
-        default=4,
-        metadata={"help": "Mixed-hash: how many arith heads per n-gram size (in addition to n_rq_levels_used)."},
     )
     clip_grad_per_group: bool = field(
         default=False,
@@ -191,31 +181,15 @@ class EngramConfig(PreTrainedConfig):
         default="flatten",
         metadata={
             "help": "Memory fusion: 'flatten' reproduces Engram; "
-            "'head_factorized' assigns independent utility gates to matched-parameter head blocks."
-        },
-    )
-    head_router_top_k: int = field(
-        default=0,
-        metadata={
-            "help": "For head_factorized fusion, keep the top-k heads per token/branch. "
-            "0 keeps all heads with soft gates."
-        },
-    )
-    head_router_preserve_mass: bool = field(
-        default=False,
-        metadata={
-            "help": "Rescale sparse/forced routes to preserve the all-head gate mass, "
-            "isolating head selection from total memory strength."
+            "'head_factorized' uses the semantic-keyed readout described below."
         },
     )
     head_router_selection: str = field(
-        default="learned",
+        default="semantic_keyed",
         metadata={
-            "help": "Head routing policy for head_factorized fusion. 'learned' uses "
-            "end-to-end differentiable competition over the retrieved RQ heads; "
-            "'specificity' is the inverse-collision-load top-k baseline; "
-            "'semantic_keyed' uses frozen RQ centroid/prefix/tail geometry as keys "
-            "and trainable Engram rows only as values."
+            "help": "Head routing policy for head_factorized fusion. Only "
+            "'semantic_keyed' is supported: frozen RQ centroid/prefix/tail geometry "
+            "provides routing keys while trainable Engram rows provide values."
         },
     )
     backbone_freeze_steps: int = field(
@@ -278,9 +252,7 @@ class EngramConfig(PreTrainedConfig):
         enable_telemetry: bool = False,
         entropy_loss_weight: float = 0.0,
         memory_fusion: str = "flatten",
-        head_router_top_k: int = 0,
-        head_router_preserve_mass: bool = False,
-        head_router_selection: str = "learned",
+        head_router_selection: str = "semantic_keyed",
         backbone_freeze_steps: int = 0,
         engram_dtype: str | None = None,
         use_sparse_embeddings: bool = True,
@@ -323,8 +295,6 @@ class EngramConfig(PreTrainedConfig):
         self.enable_telemetry = enable_telemetry
         self.entropy_loss_weight = entropy_loss_weight
         self.memory_fusion = memory_fusion
-        self.head_router_top_k = head_router_top_k
-        self.head_router_preserve_mass = head_router_preserve_mass
         self.head_router_selection = head_router_selection
         self.backbone_freeze_steps = backbone_freeze_steps
         self.engram_dtype = engram_dtype

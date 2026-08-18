@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rq_cache_dir")
     parser.add_argument(
         "--rq_router",
-        choices=["flatten", "collision", "learned", "semantic_keyed"],
+        choices=["flatten", "semantic_keyed"],
         default="flatten",
         help="RQ memory readout. Ignored by non-RQ methods.",
     )

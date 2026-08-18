@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rq_cache_dir")
     parser.add_argument(
         "--rq_router",
-        choices=["flatten", "collision", "learned", "semantic_keyed"],
+        choices=["flatten", "semantic_keyed"],
         default="flatten",
         help="RQ memory readout. Ignored by non-RQ methods.",
     )
@@ -93,24 +93,10 @@ def _engram_config(args: argparse.Namespace, model: Any) -> EngramConfig:
     routing_config: dict[str, Any]
     if method != "rq" or router == "flatten":
         routing_config = {"memory_fusion": "flatten"}
-    elif router == "collision":
-        routing_config = {
-            "memory_fusion": "head_factorized",
-            "head_router_selection": "specificity",
-            "head_router_top_k": 4,
-            "head_router_preserve_mass": True,
-        }
-    elif router == "learned":
-        routing_config = {
-            "memory_fusion": "head_factorized",
-            "head_router_selection": "learned",
-            "head_router_top_k": 0,
-        }
     elif router == "semantic_keyed":
         routing_config = {
             "memory_fusion": "head_factorized",
             "head_router_selection": "semantic_keyed",
-            "head_router_top_k": 0,
         }
     else:
         raise ValueError(f"Unknown RQ router: {router}")

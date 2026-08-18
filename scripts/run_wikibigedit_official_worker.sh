@@ -37,18 +37,18 @@ case "$MODE" in
   lora)
     METHOD="lora"
     ;;
-  semantic_specificity)
+  semantic_keyed)
     TABLE="$SEMANTIC_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
+    EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   semantic_flatten)
     TABLE="$SEMANTIC_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
-  shuffled_specificity)
+  shuffled_semantic_keyed)
     TABLE="$SHUFFLED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
+    EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   shuffled_flatten)

@@ -90,7 +90,7 @@ def normalize_backend_name(name: str) -> str:
     name = name.strip().lower()
     if name in {"arith", "arithmetic"}:
         return "arithmetic"
-    if name in {"rq", "mixed", "mixed_v2"}:
+    if name == "rq":
         return name
     raise ValueError(f"Unsupported hash backend: {name}")
 
@@ -102,10 +102,7 @@ def backend_tag_for_output(backend: str, rq_table_dir: str | None) -> str:
     if backend == "rq":
         suffix = os.path.basename(os.path.normpath(rq_table_dir)) if rq_table_dir else "rq"
         return f"rq_{suffix}"
-    if backend == "mixed":
-        suffix = os.path.basename(os.path.normpath(rq_table_dir)) if rq_table_dir else "mixed"
-        return f"mixed_{suffix}"
-    return f"{backend}_{os.path.basename(os.path.normpath(rq_table_dir)) if rq_table_dir else backend}"
+    return "arith"
 
 
 def engram_output_dir(
@@ -123,7 +120,7 @@ def build_engram_config(
     sparse_embeddings: bool,
 ) -> EngramConfig:
     normalized_backend = normalize_backend_name(backend)
-    if normalized_backend in {"rq", "mixed", "mixed_v2"} and not args.rq_table_dir:
+    if normalized_backend == "rq" and not args.rq_table_dir:
         raise ValueError(
             f"backend={normalized_backend} requires --rq_table_dir"
         )
@@ -135,8 +132,6 @@ def build_engram_config(
         entropy_loss_weight=args.entropy_loss_weight if not args.use_deepspeed else 0.0,
         hash_backend=normalized_backend,
         rq_table_dir=args.rq_table_dir if normalized_backend != "arithmetic" else None,
-        n_rq_levels_used=args.n_rq_levels_used,
-        n_arith_heads_per_ngram=args.n_arith_heads_per_ngram,
     )
 
 
@@ -621,12 +616,10 @@ def parse_args() -> argparse.Namespace:
         "--backends",
         nargs="+",
         default=["arithmetic"],
-        choices=["arith", "arithmetic", "rq", "mixed", "mixed_v2"],
-        help="Run Engram with one or more hash backends: arith/rq/mixed/mixed_v2.",
+        choices=["arith", "arithmetic", "rq"],
+        help="Run Engram with one or more hash backends: arith/rq.",
     )
     p.add_argument("--rq_table_dir", type=str, default=None)
-    p.add_argument("--n_rq_levels_used", type=int, default=4)
-    p.add_argument("--n_arith_heads_per_ngram", type=int, default=4)
     p.add_argument(
         "--disable_sparse_embeddings",
         action="store_true",

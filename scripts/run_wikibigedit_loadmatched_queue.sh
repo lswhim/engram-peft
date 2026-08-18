@@ -38,7 +38,7 @@ if [[ -n "${WAIT_PID:-}" ]]; then
   done
 fi
 
-for MODE in loadmatched_flatten loadmatched_specificity; do
+for MODE in loadmatched_flatten loadmatched_semantic_keyed; do
   wait_for_same_worker "$MODE"
   if is_complete "$MODE"; then
     echo "SKIP complete $MODE seed=$SEED"

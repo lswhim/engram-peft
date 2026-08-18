@@ -28,57 +28,27 @@ mkdir -p run_logs "$OUT_ROOT/$MODE/seed_${SEED}"
 
 COMMON="n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[11,21]"
 case "$MODE" in
-  semantic_specificity)
-    TABLE="$SEMANTIC_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
-    ;;
-  semantic_learned)
-    TABLE="$SEMANTIC_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=learned"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
-    ;;
   semantic_keyed)
     TABLE="$SEMANTIC_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed"
+    EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   semantic_flatten)
     TABLE="$SEMANTIC_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
-  shuffled_specificity)
-    TABLE="$SHUFFLED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
-    ;;
-  shuffled_learned)
-    TABLE="$SHUFFLED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=learned"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
-    ;;
   shuffled_semantic_keyed)
     TABLE="$SHUFFLED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed"
+    EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   shuffled_flatten)
     TABLE="$SHUFFLED_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
-  loadmatched_specificity)
-    TABLE="$LOADMATCHED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
-    ;;
-  loadmatched_learned)
-    TABLE="$LOADMATCHED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=learned"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
-    ;;
   loadmatched_semantic_keyed)
     TABLE="$LOADMATCHED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed"
+    EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   loadmatched_flatten)

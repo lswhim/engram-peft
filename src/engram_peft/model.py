@@ -16,11 +16,7 @@ from engram_peft.compression import CompressedTokenizer
 from engram_peft.config import EngramConfig
 from engram_peft.discovery import ArchitectureResolver
 from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
-from engram_peft.layer import (
-    EngramLayer,
-    HeadFactorizedGating,
-    SemanticKeyedGating,
-)
+from engram_peft.layer import EngramLayer, SemanticKeyedGating
 from engram_peft.rq_hashing import RQNgramMapping
 from engram_peft.types import (
     EngramModelProtocol,
@@ -152,38 +148,6 @@ class EngramModel(nn.Module, GenerationMixin):
                 pad_id=mapped_pad_id,
                 seed=config.seed,
             )
-        elif config.hash_backend == "mixed":
-            assert config.rq_table_dir is not None, (
-                "rq_table_dir must be set when hash_backend='mixed'"
-            )
-            from engram_peft.mixed_hashing import MixedHashMapping
-            self.hash_mapping = MixedHashMapping(
-                table_dir=config.rq_table_dir,
-                compressed_vocab_size=config.compressed_vocab_size,
-                engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
-                ngram_sizes=config.ngram_sizes,
-                layer_ids=config.target_layers,
-                pad_id=mapped_pad_id,
-                n_arith_heads_per_ngram=config.n_arith_heads_per_ngram,
-                n_rq_levels_used=config.n_rq_levels_used,
-                seed=config.seed,
-            )
-        elif config.hash_backend == "mixed_v2":
-            assert config.rq_table_dir is not None, (
-                "rq_table_dir must be set when hash_backend='mixed_v2'"
-            )
-            from engram_peft.mixed_hashing import MixedV2HashMapping
-            self.hash_mapping = MixedV2HashMapping(
-                table_dir=config.rq_table_dir,
-                compressed_vocab_size=config.compressed_vocab_size,
-                engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
-                ngram_sizes=config.ngram_sizes,
-                layer_ids=config.target_layers,
-                pad_id=mapped_pad_id,
-                n_arith_heads_per_ngram=config.n_arith_heads_per_ngram,
-                n_rq_levels_used=config.n_rq_levels_used,
-                seed=config.seed,
-            )
         else:
             self.hash_mapping = NgramHashMapping(
                 engram_vocab_size_per_ngram=config.engram_vocab_size_per_ngram,
@@ -232,12 +196,9 @@ class EngramModel(nn.Module, GenerationMixin):
             self.adapters.float()
 
     def _flat_primes_for_layer(self, layer_id: int) -> list[int]:
-        """Per-head embedding table sizes for a layer (arithmetic primes / RQ [K]*heads / mixed)."""
+        """Per-head embedding table sizes for a layer (arithmetic primes / RQ [K]*heads)."""
         if isinstance(self.hash_mapping, RQNgramMapping):
             return self.hash_mapping.primes
-        # MixedHashMapping (avoid hard import dep to keep RQNgramMapping isinstance check cheap)
-        if hasattr(self.hash_mapping, "flat_primes"):
-            return self.hash_mapping.flat_primes(layer_id)
         prime_list = self.hash_mapping.prime_tables[layer_id]
         return [p for head_primes in prime_list for p in head_primes]
 
@@ -356,7 +317,7 @@ class EngramModel(nn.Module, GenerationMixin):
         logits: list[torch.Tensor] = []
         for _, layer in self.engram_layers.items():
             if isinstance(layer, EngramLayer) and isinstance(
-                layer.gating, (HeadFactorizedGating, SemanticKeyedGating)
+                layer.gating, SemanticKeyedGating
             ):
                 if layer.gating.last_route_logits is not None:
                     logits.append(layer.gating.last_route_logits)
@@ -737,13 +698,7 @@ class EngramModel(nn.Module, GenerationMixin):
             self._current_hash_indices = None
 
             input_ids_to_hash = input_ids
-            if (
-                engram_hash_indices is not None
-                and not (
-                    self.config.hash_backend == "mixed_v2"
-                    and not isinstance(engram_hash_indices, dict)
-                )
-            ):
+            if engram_hash_indices is not None:
                 self._current_hash_indices = engram_hash_indices
             elif input_ids_to_hash is not None:
                 if self.compressor:
