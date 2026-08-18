@@ -32,6 +32,8 @@ from typing import Any
 
 import numpy as np
 
+from engram_peft.rq_table_tools import bucket_signal_to_interference
+
 @dataclass
 class RQNgramMapping:
     """Frozen RQ semantic-hash mapping. Loaded from an offline-built table dir."""
@@ -49,6 +51,7 @@ class RQNgramMapping:
     codebook_size: int = field(init=False)
     sorted_keys: dict[int, np.ndarray] = field(init=False)
     codes: dict[int, np.ndarray] = field(init=False)
+    residual_gains: dict[int, np.ndarray] = field(init=False)
     total_heads: int = field(init=False)
     _cache: sqlite3.Connection | None = field(init=False, default=None, repr=False)
     _runtime_codes: dict[int, dict[int, np.ndarray]] = field(
@@ -79,12 +82,22 @@ class RQNgramMapping:
         self.runtime_oov_shuffle_seed = meta.get("runtime_oov_shuffle_seed")
         self.sorted_keys = {}
         self.codes = {}
+        self.residual_gains = {}
         for n in self.ngram_sizes:
             self.sorted_keys[n] = np.load(os.path.join(self.table_dir, f"keys_{n}.npy"))
             self.codes[n] = np.load(
                 os.path.join(self.table_dir, f"codes_{n}.npy")
             ).astype(np.int64)
             self.codes[n] = self._shuffle_codes(n, self.codes[n])
+            gains_path = os.path.join(self.table_dir, f"residual_gains_{n}.npy")
+            if os.path.isfile(gains_path):
+                gains = np.load(gains_path).astype(np.float32)
+                if gains.shape != self.codes[n].shape:
+                    raise ValueError(
+                        f"residual_gains_{n}.npy shape {gains.shape} does not match "
+                        f"codes {self.codes[n].shape}"
+                    )
+                self.residual_gains[n] = gains
         self.total_heads = self.num_levels * len(self.ngram_sizes)
         self.max_ngram_size = max(self.ngram_sizes)
         if self.cache_dir is not None:
@@ -109,6 +122,22 @@ class RQNgramMapping:
     def primes(self) -> list[int]:
         """Per-head table sizes (= K for every RQ level head)."""
         return [self.codebook_size] * self.total_heads
+
+    def signal_to_interference_table(self) -> np.ndarray:
+        """Return [total_heads, K] RQ-semantic reliability scores."""
+        missing = [n for n in self.ngram_sizes if n not in self.residual_gains]
+        if missing:
+            raise FileNotFoundError(
+                "RQ signal-to-interference routing requires residual gain artifacts; "
+                f"missing n-gram sizes {missing} in {self.table_dir}"
+            )
+        rows = [
+            bucket_signal_to_interference(
+                self.codes[n], self.residual_gains[n], self.codebook_size
+            )
+            for n in self.ngram_sizes
+        ]
+        return np.concatenate(rows, axis=0)
 
     def _poly_keys(self, ngrams: np.ndarray) -> np.ndarray:
         """[*, n] compressed-id windows -> [*] int64 poly keys (base-radix)."""

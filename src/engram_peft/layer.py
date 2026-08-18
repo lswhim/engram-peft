@@ -365,10 +365,10 @@ class HeadFactorizedGating(nn.Module):
                 )
                 if selection == "context":
                     selection_logits = route_logits
-                elif selection == "specificity":
+                elif selection in {"specificity", "rq_snr"}:
                     if head_selection_scores is None:
                         raise ValueError(
-                            "head_router_selection='specificity' requires per-address scores"
+                            f"head_router_selection={selection!r} requires per-address scores"
                         )
                     if head_selection_scores.shape != route_logits.shape[:2] + (
                         self.num_heads,
@@ -382,7 +382,7 @@ class HeadFactorizedGating(nn.Module):
                     )[:, :, None, :].expand_as(route_logits)
                 else:
                     raise ValueError(
-                        "head_router_selection must be 'context' or 'specificity', "
+                        "head_router_selection must be 'context', 'specificity', or 'rq_snr', "
                         f"got {selection!r}"
                     )
                 indices = selection_logits.topk(top_k, dim=-1).indices
@@ -677,30 +677,34 @@ class EngramLayer(nn.Module):
                     hc_mult=self.num_branches,
                     zero_init=config.gating_zero_init,
                 )
-                if config.head_router_selection == "specificity":
+                if config.head_router_selection in {"specificity", "rq_snr"}:
                     if config.hash_backend != "rq":
                         raise ValueError(
-                            "specificity head selection currently requires hash_backend='rq'"
+                            "address-score head selection currently requires hash_backend='rq'"
                         )
                     if not config.rq_table_dir:
                         raise ValueError(
-                            "specificity head selection requires rq_table_dir"
+                            "address-score head selection requires rq_table_dir"
                         )
                     rq_mapping = RQNgramMapping(config.rq_table_dir)
-                    rows: list[np.ndarray] = []
-                    for n in rq_mapping.ngram_sizes:
-                        codes = rq_mapping.codes[n]
-                        for level in range(rq_mapping.num_levels):
-                            counts = np.bincount(
-                                codes[:, level], minlength=rq_mapping.codebook_size
-                            ).astype(np.float32)
-                            # Distinct n-grams per bucket measure collision load. The
-                            # per-head z-score makes levels comparable without using
-                            # any downstream labels or evaluation examples.
-                            score = -np.log1p(counts)
-                            score = (score - score.mean()) / (score.std() + 1e-6)
-                            rows.append(score)
-                    specificity = torch.from_numpy(np.stack(rows)).float()
+                    if config.head_router_selection == "rq_snr":
+                        score_array = rq_mapping.signal_to_interference_table()
+                    else:
+                        rows: list[np.ndarray] = []
+                        for n in rq_mapping.ngram_sizes:
+                            codes = rq_mapping.codes[n]
+                            for level in range(rq_mapping.num_levels):
+                                counts = np.bincount(
+                                    codes[:, level], minlength=rq_mapping.codebook_size
+                                ).astype(np.float32)
+                                # Distinct n-grams per bucket measure collision load. The
+                                # per-head z-score makes levels comparable without using
+                                # any downstream labels or evaluation examples.
+                                score = -np.log1p(counts)
+                                score = (score - score.mean()) / (score.std() + 1e-6)
+                                rows.append(score)
+                        score_array = np.stack(rows)
+                    specificity = torch.from_numpy(score_array).float()
                     if specificity.shape != (len(primes), max(primes)):
                         raise ValueError(
                             "RQ specificity table shape does not match memory heads: "

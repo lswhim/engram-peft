@@ -212,8 +212,9 @@ class EngramConfig(PreTrainedConfig):
         default="context",
         metadata={
             "help": "Score used to select sparse memory heads: 'context' uses the "
-            "learned Engram route logits; 'specificity' uses the inverse collision "
-            "load of the addressed RQ bucket. Gate amplitudes remain context-derived."
+            "learned Engram route logits; 'specificity' uses inverse collision load; "
+            "'rq_snr' uses RQ residual-energy signal per collision. Gate amplitudes "
+            "remain context-derived."
         },
     )
     head_router_use_null: bool = field(
