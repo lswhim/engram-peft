@@ -35,6 +35,15 @@ The following specific implementation details from the DeepSeek official demo ar
     This ensures numerical stability and matches the exact gating behavior of the original research.
 2.  **Polynomial Hash Coefficients**:
     Unique random multipliers are generated for each head and each layer to minimize hash collisions across the architecture.
+
+### Semantic-keyed multi-head readout
+
+For Semantic-RQ addresses, the same discrete code indexes two distinct objects:
+the frozen RQ centroid that describes address semantics and the trainable Engram
+row that stores task memory. The semantic-keyed readout uses centroid, cumulative
+prefix, and quantized tail-residual geometry as attention keys, while Engram rows
+remain values. This keeps all multi-head lookups differentiable while separating
+address meaning from stored knowledge.
 3.  **Efficiency**:
     Embedding tables for all heads in a layer are concatenated into a single larger `nn.Embedding` and indexed using offsets for maximum GPU throughput.
 4.  **mHC (multi-Head Hyper-connection)**:

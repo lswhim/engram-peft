@@ -16,7 +16,11 @@ from engram_peft.compression import CompressedTokenizer
 from engram_peft.config import EngramConfig
 from engram_peft.discovery import ArchitectureResolver
 from engram_peft.hashing import FixedNgramHashMapping, NgramHashMapping
-from engram_peft.layer import EngramLayer, HeadFactorizedGating
+from engram_peft.layer import (
+    EngramLayer,
+    HeadFactorizedGating,
+    SemanticKeyedGating,
+)
 from engram_peft.rq_hashing import RQNgramMapping
 from engram_peft.types import (
     EngramModelProtocol,
@@ -352,7 +356,7 @@ class EngramModel(nn.Module, GenerationMixin):
         logits: list[torch.Tensor] = []
         for _, layer in self.engram_layers.items():
             if isinstance(layer, EngramLayer) and isinstance(
-                layer.gating, HeadFactorizedGating
+                layer.gating, (HeadFactorizedGating, SemanticKeyedGating)
             ):
                 if layer.gating.last_route_logits is not None:
                     logits.append(layer.gating.last_route_logits)

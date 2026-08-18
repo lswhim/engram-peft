@@ -38,6 +38,11 @@ case "$MODE" in
     EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=learned"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
+  semantic_keyed)
+    TABLE="$SEMANTIC_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed,semantic_router_dim=64"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
   semantic_flatten)
     TABLE="$SEMANTIC_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
@@ -52,6 +57,11 @@ case "$MODE" in
     EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=learned"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
+  shuffled_semantic_keyed)
+    TABLE="$SHUFFLED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed,semantic_router_dim=64"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
   shuffled_flatten)
     TABLE="$SHUFFLED_TABLE"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},memory_fusion=flatten"
@@ -64,6 +74,11 @@ case "$MODE" in
   loadmatched_learned)
     TABLE="$LOADMATCHED_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=learned"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
+    ;;
+  loadmatched_semantic_keyed)
+    TABLE="$LOADMATCHED_TABLE"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=0,head_router_selection=semantic_keyed,semantic_router_dim=64"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/wikibigedit_collision50k_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   loadmatched_flatten)

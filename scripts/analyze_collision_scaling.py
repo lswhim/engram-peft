@@ -29,6 +29,9 @@ DEFAULT_METHODS = (
     "semantic_learned",
     "shuffled_learned",
     "loadmatched_learned",
+    "semantic_keyed",
+    "shuffled_semantic_keyed",
+    "loadmatched_semantic_keyed",
 )
 DEFAULT_PAIRS = (
     ("semantic_specificity", "semantic_flatten"),
@@ -44,6 +47,11 @@ DEFAULT_PAIRS = (
     ("loadmatched_learned", "loadmatched_flatten"),
     ("semantic_learned", "shuffled_learned"),
     ("semantic_learned", "loadmatched_learned"),
+    ("semantic_keyed", "semantic_flatten"),
+    ("shuffled_semantic_keyed", "shuffled_flatten"),
+    ("loadmatched_semantic_keyed", "loadmatched_flatten"),
+    ("semantic_keyed", "shuffled_semantic_keyed"),
+    ("semantic_keyed", "loadmatched_semantic_keyed"),
 )
 DEFAULT_INTERACTIONS = (
     (
@@ -68,6 +76,18 @@ DEFAULT_INTERACTIONS = (
         "semantic_learned",
         "semantic_flatten",
         "loadmatched_learned",
+        "loadmatched_flatten",
+    ),
+    (
+        "semantic_keyed",
+        "semantic_flatten",
+        "shuffled_semantic_keyed",
+        "shuffled_flatten",
+    ),
+    (
+        "semantic_keyed",
+        "semantic_flatten",
+        "loadmatched_semantic_keyed",
         "loadmatched_flatten",
     ),
 )

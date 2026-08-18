@@ -57,6 +57,9 @@ class RQNgramMapping:
     _tokenizer: Any = field(init=False, default=None, repr=False)
     _embedder: Any = field(init=False, default=None, repr=False)
     _rq_indices: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
+    _centroid_codebooks: np.ndarray | None = field(
+        init=False, default=None, repr=False
+    )
     _projectors: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
     _meta: dict[str, Any] = field(init=False, repr=False)
     _trace_enabled: bool = field(init=False, default=False, repr=False)
@@ -109,6 +112,53 @@ class RQNgramMapping:
     def primes(self) -> list[int]:
         """Per-head table sizes (= K for every RQ level head)."""
         return [self.codebook_size] * self.total_heads
+
+    def centroid_codebooks(self) -> np.ndarray:
+        """Return frozen RQ centroids as [total_heads, K, rq_dim].
+
+        Head order exactly matches :meth:`hash`: all residual levels for the
+        first n-gram order, followed by all levels for the next order.  The same
+        integer code therefore indexes both the Engram memory row and its
+        semantic routing key.
+        """
+        if self._centroid_codebooks is not None:
+            return self._centroid_codebooks
+        import faiss
+
+        tables: list[np.ndarray] = []
+        expected_dim: int | None = None
+        for n in self.ngram_sizes:
+            path = os.path.join(self.table_dir, f"rq_{n}.faiss")
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"{path} is missing; semantic-keyed routing requires the "
+                    "frozen RQ quantizer"
+                )
+            index = faiss.read_index(path)
+            rq = index.rq
+            dimension = int(rq.d)
+            if int(rq.M) != self.num_levels:
+                raise ValueError(
+                    f"{path} has M={rq.M}; expected {self.num_levels} levels"
+                )
+            raw = faiss.vector_to_array(rq.codebooks)
+            expected = self.num_levels * self.codebook_size * dimension
+            if raw.size != expected:
+                raise ValueError(
+                    f"{path} contains {raw.size} centroid values; expected {expected}"
+                )
+            if expected_dim is not None and dimension != expected_dim:
+                raise ValueError(
+                    "all n-gram RQ codebooks must share one embedding dimension"
+                )
+            expected_dim = dimension
+            tables.append(
+                raw.reshape(
+                    self.num_levels, self.codebook_size, dimension
+                ).astype(np.float32)
+            )
+        self._centroid_codebooks = np.concatenate(tables, axis=0)
+        return self._centroid_codebooks
 
     def _poly_keys(self, ngrams: np.ndarray) -> np.ndarray:
         """[*, n] compressed-id windows -> [*] int64 poly keys (base-radix)."""
