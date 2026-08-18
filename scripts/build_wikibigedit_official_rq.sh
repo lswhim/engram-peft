@@ -5,10 +5,10 @@ GPU_ID="${1:-0}"
 ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}"
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
-EMBEDDER=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-0.6B/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-0.6B
+EMBEDDER=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-4B
 MANIFEST=data/semantic_memory/wikibigedit_official_timesteps/wiki_big_edit_20240201_20240220.jsonl
 EXPECTED_CALIBRATION_EDITS=26922
-TABLE=rq_tables/wikibigedit_official_t0_qwen3emb06b_M8K16
+TABLE=rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16
 SHUFFLED=${TABLE}_runtime_shuffled_seed42
 
 cd "$ROOT"
@@ -28,7 +28,7 @@ if [[ ! -f "$TABLE/meta.json" ]]; then
     --base_tokenizer "$BASE" --embedder "$EMBEDDER" \
     --num_levels 8 --codebook_size 16 --projection_dim 0 \
     --max_doc_tokens 128 --max_ngrams_per_size 500000 --min_count 1 \
-    --embed_batch_size 256 --rq_train_threads 8 --seed 0 \
+    --embed_batch_size 256 --rq_train_threads 32 --seed 0 \
     --output_dir "$TABLE"
 fi
 
@@ -44,8 +44,8 @@ from pathlib import Path
 import numpy as np
 
 for directory in (
-    Path("rq_tables/wikibigedit_official_t0_qwen3emb06b_M8K16"),
-    Path("rq_tables/wikibigedit_official_t0_qwen3emb06b_M8K16_runtime_shuffled_seed42"),
+    Path("rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16"),
+    Path("rq_tables/wikibigedit_official_t0_qwen3emb4b_M8K16_runtime_shuffled_seed42"),
 ):
     meta = json.loads((directory / "meta.json").read_text())
     print(directory, meta)
