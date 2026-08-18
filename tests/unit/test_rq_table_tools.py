@@ -33,6 +33,20 @@ def test_residual_gains_and_bucket_snr_reward_explained_signal() -> None:
     assert np.isfinite(scores).all()
 
 
+def test_bucket_snr_preserves_absolute_rq_level_strength() -> None:
+    codes = np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.uint16)
+    gains = np.asarray(
+        [[0.8, 0.02], [0.8, 0.02], [0.6, 0.01], [0.6, 0.01]],
+        dtype=np.float32,
+    )
+    scores = bucket_signal_to_interference(codes, gains, codebook_size=2)
+
+    # Loads are identical, so the level that removes much more normalized
+    # residual energy must remain globally preferable.  A per-level z-score
+    # would incorrectly make the two levels indistinguishable here.
+    assert np.all(scores[0] > scores[1])
+
+
 def test_shuffled_codes_preserves_level_histograms_and_joint_rows() -> None:
     codes = np.asarray(
         [[0, 1], [0, 2], [1, 1], [2, 0], [2, 2]], dtype=np.uint16

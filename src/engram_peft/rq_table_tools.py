@@ -64,8 +64,13 @@ def bucket_signal_to_interference(
             ids, weights=positive[:, level], minlength=codebook_size
         ).astype(np.float32)
         mean_signal = signal_sum / np.maximum(counts, 1.0)
-        raw = np.log(mean_signal.clip(min=1e-8)) - np.log1p(counts)
-        scores[level] = (raw - raw.mean()) / (raw.std() + 1e-6)
+        # Keep the absolute cross-level scale.  Residual gains are normalized by
+        # each source vector's initial energy, so a coarse level explaining 60%
+        # and a late level explaining 1% are directly comparable.  Per-level
+        # z-scoring would erase exactly that RQ hierarchy and could promote a
+        # relatively good but absolutely weak late-level code over a genuinely
+        # informative early-level code.
+        scores[level] = np.log(mean_signal.clip(min=1e-8)) - np.log1p(counts)
     return scores
 
 
