@@ -2,7 +2,7 @@
 set -euo pipefail
 
 GPU_ID="${1:-0}"
-ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}"
+ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}"
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 EMBEDDER=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-Embedding-4B

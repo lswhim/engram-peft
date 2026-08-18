@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WAIT_PID=${WAIT_PID:?set WAIT_PID to the arithmetic worker PID}
-ROOT=${ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}
+ROOT=${ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}
 PY=${PY:-/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python}
 OUT_ROOT=${OUT_ROOT:-outputs/semantic_memory/wikibigedit_collision_scaling_50000}
 

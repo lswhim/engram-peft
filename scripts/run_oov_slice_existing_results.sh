@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=${ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}
+ROOT=${ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}
 PY=${PY:-/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python}
 MODEL=${MODEL:-/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base}
 MANIFEST=${MANIFEST:-data/semantic_memory/wikibigedit_eval_50000.jsonl}

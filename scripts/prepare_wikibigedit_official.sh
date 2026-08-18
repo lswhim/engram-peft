@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}"
+ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}"
 PY="${ENGRAM_PYTHON:-/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python}"
 DATA_DIR="$ROOT/data/wikibigedit_official"
 OUTPUT="$ROOT/data/semantic_memory/wikibigedit_official_chronological.jsonl"

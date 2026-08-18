@@ -4,7 +4,7 @@ set -euo pipefail
 GPU_ID="$1"
 MODE="$2"
 SEED="${3:-42}"
-ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}"
+ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}"
 PY=/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python
 BASE=/anguszhang-cfs-nj/seokliu_workspace/models/Qwen3-1.7B-Base
 TIMESTEP_DIR=data/semantic_memory/wikibigedit_official_timesteps

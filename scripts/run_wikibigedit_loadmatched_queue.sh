@@ -3,7 +3,7 @@ set -euo pipefail
 
 GPU_ID="$1"
 SEED="$2"
-ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram_collision}"
+ROOT="${ENGRAM_ROOT:-/anguszhang-cfs-nj/seokliu_workspace/engram}"
 PY=${PY:-/anguszhang-cfs-nj/seokliu_workspace/miniconda3/envs/engram/bin/python}
 cd "$ROOT"
 
