@@ -28,7 +28,7 @@ if [[ ! -f "$TABLE/meta.json" ]]; then
     --base_tokenizer "$BASE" --embedder "$EMBEDDER" \
     --num_levels 8 --codebook_size 16 --projection_dim 0 \
     --max_doc_tokens 128 --max_ngrams_per_size 500000 --min_count 1 \
-    --embed_batch_size 256 --rq_train_threads 32 --seed 0 \
+    --embed_batch_size 256 --rq_train_threads 8 --seed 0 \
     --output_dir "$TABLE"
 fi
 
