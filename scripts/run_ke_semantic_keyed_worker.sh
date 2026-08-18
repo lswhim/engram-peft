@@ -12,7 +12,7 @@ SEM_TABLE=rq_tables/fineweb_qwen3emb06b_M8K256_300k_strict
 cd "$ROOT"
 export CUDA_VISIBLE_DEVICES="$GPU"
 export PYTHONPATH="$ROOT/src:$ROOT"
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_DISABLE_XET=1
 export https_proxy=http://star-proxy.oa.com:3128 http_proxy=http://star-proxy.oa.com:3128
 export no_proxy=.woa.com,.oa.com,localhost,127.0.0.1
 mkdir -p run_logs outputs/ke_semantic_keyed
