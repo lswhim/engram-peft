@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,20 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def read_training_step(log_path: Path) -> tuple[int, int] | None:
+    """Return (current_step, total_steps) parsed from a worker log tail."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    # The tqdm bar ends in ``NNN/1347 [..]``; take the last occurrence.
+    matches = re.findall(r"(\d+)/(\d+)\s+\[", text)
+    if not matches:
+        return None
+    step, total = matches[-1]
+    return int(step), int(total)
+
+
 def scan(root: Path, methods: list[str], seeds: list[int]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     for method in methods:
@@ -93,6 +108,9 @@ def scan(root: Path, methods: list[str], seeds: list[int]) -> dict[str, Any]:
             entries[seed] = {
                 "completed_timesteps": completed,
                 "points": points,
+                "training": read_training_step(
+                    Path("run_logs") / f"wikibigedit_official_{method}_seed{seed}.log"
+                ),
             }
         # Latest completed axes across completed seeds.
         final_axes: dict[str, dict[str, float | None]] = {}
@@ -144,9 +162,15 @@ def render(summary: dict[str, Any], now: str) -> str:
     seed_rows: list[str] = []
     for method, payload in summary.items():
         for seed, entry in payload["seeds"].items():
+            training = entry.get("training")
+            step_cell = "—"
+            if training is not None:
+                step, total = training
+                step_cell = f"{step}/{total}"
             seed_rows.append(
                 f"<tr><td>{html.escape(method)}</td><td>{seed}</td>"
-                f"<td>{entry['completed_timesteps']}/{len(TIMESTEPS)}</td></tr>"
+                f"<td>{entry['completed_timesteps']}/{len(TIMESTEPS)}</td>"
+                f"<td>{step_cell}</td></tr>"
             )
 
     head = "".join(f"<th>{html.escape(AXIS_LABELS[a])}</th>" for a in AXES)
@@ -168,7 +192,7 @@ section{{margin:20px 0}}h2{{font-size:20px;margin:0 0 8px}}
 <table><thead><tr><th>方法</th><th>完成</th>{head}</tr></thead>
 <tbody>{''.join(method_rows)}</tbody></table></section>
 <section><h2>逐 Seed 进度</h2>
-<table><thead><tr><th>方法</th><th>Seed</th><th>时间步</th></tr></thead>
+<table><thead><tr><th>方法</th><th>Seed</th><th>时间步</th><th>当前 step</th></tr></thead>
 <tbody>{''.join(seed_rows)}</tbody></table></section>
 </main></body></html>
 """
