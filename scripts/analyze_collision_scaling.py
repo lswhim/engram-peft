@@ -162,7 +162,10 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
 
     rng = random.Random(args.bootstrap_seed)
     comparisons: dict[str, Any] = {}
+    active_methods = set(args.methods)
     for left, right in DEFAULT_PAIRS:
+        if left not in active_methods or right not in active_methods:
+            continue
         name = f"{left}_minus_{right}"
         comparisons[name] = {}
         for milestone in args.milestones:
@@ -191,6 +194,13 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
 
     interactions: dict[str, Any] = {}
     for semantic_aware, semantic_flat, control_aware, control_flat in DEFAULT_INTERACTIONS:
+        if not {
+            semantic_aware,
+            semantic_flat,
+            control_aware,
+            control_flat,
+        }.issubset(active_methods):
+            continue
         name = (
             f"{semantic_aware}_minus_{semantic_flat}__minus__"
             f"{control_aware}_minus_{control_flat}"
