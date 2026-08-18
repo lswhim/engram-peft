@@ -42,6 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="Qwen/Qwen3-1.7B")
     parser.add_argument("--rq_table_dir")
     parser.add_argument("--rq_cache_dir")
+    parser.add_argument(
+        "--rq_router",
+        choices=["flatten", "collision", "learned"],
+        default="flatten",
+        help="RQ memory readout. Ignored by non-RQ methods.",
+    )
     parser.add_argument("--output_dir", default="outputs/xtreme_xnli")
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -83,6 +89,25 @@ def _engram_config(args: argparse.Namespace, model: Any) -> EngramConfig:
         bucket_size = int(rq_meta["codebook_size"]) * num_heads
     else:
         bucket_size = int(args.arith_buckets)
+    router = str(args.rq_router)
+    routing_config: dict[str, Any]
+    if method != "rq" or router == "flatten":
+        routing_config = {"memory_fusion": "flatten"}
+    elif router == "collision":
+        routing_config = {
+            "memory_fusion": "head_factorized",
+            "head_router_selection": "specificity",
+            "head_router_top_k": 4,
+            "head_router_preserve_mass": True,
+        }
+    elif router == "learned":
+        routing_config = {
+            "memory_fusion": "head_factorized",
+            "head_router_selection": "learned",
+            "head_router_top_k": 0,
+        }
+    else:
+        raise ValueError(f"Unknown RQ router: {router}")
     return EngramConfig(
         ngram_sizes=[2, 3],
         n_head_per_ngram=num_heads,
@@ -105,6 +130,7 @@ def _engram_config(args: argparse.Namespace, model: Any) -> EngramConfig:
         rq_cache_dir=args.rq_cache_dir if method == "rq" else None,
         seed=int(args.seed),
         use_sparse_embeddings=False,
+        **routing_config,
     )
 
 
@@ -176,7 +202,11 @@ def main() -> None:
     args.tokenizer = tokenizer
     args.pad_token_id = tokenizer.pad_token_id
 
-    run_name = f"{args.method}_seed{args.seed}"
+    run_name = (
+        f"rq_{args.rq_router}_seed{args.seed}"
+        if args.method == "rq"
+        else f"{args.method}_seed{args.seed}"
+    )
     run_dir = Path(args.output_dir) / run_name
     result_path = run_dir / "metrics.json"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -245,6 +275,7 @@ def main() -> None:
         "status": "evaluating",
         "protocol": "MNLI English full train -> XNLI 15-language test, zero target updates",
         "method": args.method,
+        "rq_router": args.rq_router if args.method == "rq" else None,
         "seed": args.seed,
         "train_examples": len(train_raw),
         "train_metrics": train_metrics,

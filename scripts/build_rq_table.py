@@ -30,8 +30,6 @@ from collections import Counter
 
 import numpy as np
 
-from engram_peft.rq_table_tools import residual_energy_gains
-
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build RQ semantic-hash table for Engram.")
@@ -331,22 +329,10 @@ def main() -> None:
         codes, rq_index = train_rq(args, rq_input)
         import faiss
 
-        codebooks = faiss.vector_to_array(rq_index.rq.codebooks).reshape(
-            args.num_levels, args.codebook_size, rq_input.shape[1]
-        )
-        gains = residual_energy_gains(rq_input, codes, codebooks)
-
         np.save(os.path.join(args.output_dir, f"keys_{n}.npy"), keys)
         np.save(os.path.join(args.output_dir, f"codes_{n}.npy"), codes)
-        np.save(
-            os.path.join(args.output_dir, f"residual_gains_{n}.npy"),
-            gains.astype(np.float16),
-        )
         faiss.write_index(rq_index, os.path.join(args.output_dir, f"rq_{n}.faiss"))
-        print(
-            f"[save] {n}-gram keys{keys.shape} codes{codes.shape} "
-            f"residual_gains{gains.shape}"
-        )
+        print(f"[save] {n}-gram keys{keys.shape} codes{codes.shape}")
 
     with open(os.path.join(args.output_dir, "meta.json"), "w") as f:
         json.dump(meta, f, indent=2)

@@ -347,14 +347,6 @@ class EngramModel(nn.Module, GenerationMixin):
 
         return torch.stack(entropies).mean()
 
-    def set_forced_head_mask(self, mask: torch.Tensor | None) -> None:
-        """Apply one counterfactual route mask to all factorized Engram layers."""
-        for _, layer in self.engram_layers.items():
-            if isinstance(layer, EngramLayer) and isinstance(
-                layer.gating, HeadFactorizedGating
-            ):
-                layer.gating.set_forced_head_mask(mask)
-
     def get_head_route_logits(self) -> list[torch.Tensor]:
         """Return route logits from the most recent forward, ordered by target layer."""
         logits: list[torch.Tensor] = []

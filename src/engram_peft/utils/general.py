@@ -529,7 +529,6 @@ def compute_telemetry_stats(
     model_telemetry_stats: dict[str, float] | None = None,
     last_ce_loss: float = 0.0,
     last_entropy_loss: float = 0.0,
-    last_credit_loss: float = 0.0,
 ) -> dict[str, float]:
     """Computes parameter/gradient statistics and weight drift across groups."""
     stats: dict[str, float] = {}
@@ -615,6 +614,5 @@ def compute_telemetry_stats(
     # 6. Loss Stats
     stats["telemetry/loss/ce"] = last_ce_loss
     stats["telemetry/loss/entropy_penalty"] = last_entropy_loss
-    stats["telemetry/loss/counterfactual_credit"] = last_credit_loss
 
     return stats

@@ -209,42 +209,12 @@ class EngramConfig(PreTrainedConfig):
         },
     )
     head_router_selection: str = field(
-        default="context",
+        default="learned",
         metadata={
-            "help": "Score used to select sparse memory heads: 'context' uses the "
-            "learned Engram route logits; 'specificity' uses inverse collision load; "
-            "'rq_snr' uses RQ residual-energy signal per collision; 'rq_signal' "
-            "ablates the collision penalty and uses residual signal alone; "
-            "'rq_level_prior' is a bucket-invariant fixed-top-k control. Gate amplitudes "
-            "remain context-derived."
+            "help": "Head routing policy for head_factorized fusion. 'learned' uses "
+            "end-to-end differentiable competition over the retrieved RQ heads; "
+            "'specificity' is the inverse-collision-load top-k baseline."
         },
-    )
-    head_router_use_null: bool = field(
-        default=False,
-        metadata={
-            "help": "Allow an explicit no-memory route when every head logit is below "
-            "head_router_null_threshold."
-        },
-    )
-    head_router_null_threshold: float = field(
-        default=0.0,
-        metadata={"help": "Fixed logit threshold for the no-memory route."},
-    )
-    credit_loss_weight: float = field(
-        default=0.0,
-        metadata={"help": "Weight of counterfactual equal-budget route preference loss."},
-    )
-    credit_pair_fraction: float = field(
-        default=0.5,
-        metadata={"help": "Fraction of each training batch used for route-pair credit."},
-    )
-    credit_route_k: int = field(
-        default=4,
-        metadata={"help": "Number of active memory heads in each counterfactual route."},
-    )
-    credit_temperature: float = field(
-        default=1.0,
-        metadata={"help": "Temperature for route-utility preference calibration."},
     )
     backbone_freeze_steps: int = field(
         default=0,
@@ -308,13 +278,7 @@ class EngramConfig(PreTrainedConfig):
         memory_fusion: str = "flatten",
         head_router_top_k: int = 0,
         head_router_preserve_mass: bool = False,
-        head_router_selection: str = "context",
-        head_router_use_null: bool = False,
-        head_router_null_threshold: float = 0.0,
-        credit_loss_weight: float = 0.0,
-        credit_pair_fraction: float = 0.5,
-        credit_route_k: int = 4,
-        credit_temperature: float = 1.0,
+        head_router_selection: str = "learned",
         backbone_freeze_steps: int = 0,
         engram_dtype: str | None = None,
         use_sparse_embeddings: bool = True,
@@ -360,12 +324,6 @@ class EngramConfig(PreTrainedConfig):
         self.head_router_top_k = head_router_top_k
         self.head_router_preserve_mass = head_router_preserve_mass
         self.head_router_selection = head_router_selection
-        self.head_router_use_null = head_router_use_null
-        self.head_router_null_threshold = head_router_null_threshold
-        self.credit_loss_weight = credit_loss_weight
-        self.credit_pair_fraction = credit_pair_fraction
-        self.credit_route_k = credit_route_k
-        self.credit_temperature = credit_temperature
         self.backbone_freeze_steps = backbone_freeze_steps
         self.engram_dtype = engram_dtype
         self.use_sparse_embeddings = use_sparse_embeddings

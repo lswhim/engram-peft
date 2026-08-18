@@ -11,93 +11,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-def residual_energy_gains(
-    vectors: NDArray[np.floating[Any]],
-    codes: NDArray[np.integer[Any]],
-    codebooks: NDArray[np.floating[Any]],
-) -> NDArray[np.float32]:
-    """Measure how much squared residual energy each RQ level removes per row."""
-    if vectors.ndim != 2 or codes.ndim != 2 or codebooks.ndim != 3:
-        raise ValueError("vectors/codes/codebooks must have ranks 2/2/3")
-    rows, dimension = vectors.shape
-    levels = codes.shape[1]
-    if codes.shape[0] != rows or codebooks.shape[0] != levels:
-        raise ValueError("RQ row/level dimensions do not match")
-    if codebooks.shape[2] != dimension:
-        raise ValueError("RQ codebook dimension does not match vectors")
-    if codes.size and (int(codes.min()) < 0 or int(codes.max()) >= codebooks.shape[1]):
-        raise ValueError("codes contain an out-of-range centroid id")
-
-    residual = np.asarray(vectors, dtype=np.float32).copy()
-    initial_energy = np.einsum("nd,nd->n", residual, residual).clip(min=1e-12)
-    gains = np.empty((rows, levels), dtype=np.float32)
-    for level in range(levels):
-        before = np.einsum("nd,nd->n", residual, residual)
-        residual -= codebooks[level, codes[:, level].astype(np.int64)]
-        after = np.einsum("nd,nd->n", residual, residual)
-        gains[:, level] = (before - after) / initial_energy
-    return gains
-
-
-def bucket_signal_to_interference(
-    codes: NDArray[np.integer[Any]],
-    residual_gains: NDArray[np.floating[Any]],
-    codebook_size: int,
-) -> NDArray[np.float32]:
-    """Return per-level/bucket log semantic-signal-to-collision scores.
-
-    Signal is the mean positive residual-energy reduction of rows assigned to a
-    bucket. Interference is its distinct-row load. Their log ratio gives one
-    scale-comparable reliability statistic without downstream labels.
-    """
-    if codes.shape != residual_gains.shape or codes.ndim != 2:
-        raise ValueError("codes and residual_gains must have the same rank-2 shape")
-    if codebook_size <= 0:
-        raise ValueError("codebook_size must be positive")
-    levels = codes.shape[1]
-    scores = np.empty((levels, codebook_size), dtype=np.float32)
-    positive = np.maximum(np.asarray(residual_gains, dtype=np.float32), 0.0)
-    for level in range(levels):
-        ids = codes[:, level].astype(np.int64)
-        counts = np.bincount(ids, minlength=codebook_size).astype(np.float32)
-        signal_sum = np.bincount(
-            ids, weights=positive[:, level], minlength=codebook_size
-        ).astype(np.float32)
-        mean_signal = signal_sum / np.maximum(counts, 1.0)
-        # Keep the absolute cross-level scale.  Residual gains are normalized by
-        # each source vector's initial energy, so a coarse level explaining 60%
-        # and a late level explaining 1% are directly comparable.  Per-level
-        # z-scoring would erase exactly that RQ hierarchy and could promote a
-        # relatively good but absolutely weak late-level code over a genuinely
-        # informative early-level code.
-        scores[level] = np.log(mean_signal.clip(min=1e-8)) - np.log1p(counts)
-    return scores
-
-
-def bucket_residual_signal(
-    codes: NDArray[np.integer[Any]],
-    residual_gains: NDArray[np.floating[Any]],
-    codebook_size: int,
-) -> NDArray[np.float32]:
-    """Return absolute per-level/bucket log residual signal without load penalty."""
-    if codes.shape != residual_gains.shape or codes.ndim != 2:
-        raise ValueError("codes and residual_gains must have the same rank-2 shape")
-    if codebook_size <= 0:
-        raise ValueError("codebook_size must be positive")
-    levels = codes.shape[1]
-    scores = np.empty((levels, codebook_size), dtype=np.float32)
-    positive = np.maximum(np.asarray(residual_gains, dtype=np.float32), 0.0)
-    for level in range(levels):
-        ids = codes[:, level].astype(np.int64)
-        counts = np.bincount(ids, minlength=codebook_size).astype(np.float32)
-        signal_sum = np.bincount(
-            ids, weights=positive[:, level], minlength=codebook_size
-        ).astype(np.float32)
-        mean_signal = signal_sum / np.maximum(counts, 1.0)
-        scores[level] = np.log(mean_signal.clip(min=1e-8))
-    return scores
-
-
 def shuffled_row_indices(row_count: int, seed: int) -> NDArray[np.int64]:
     """Return a deterministic row permutation for an RQ code matrix."""
     if row_count < 0:
@@ -241,18 +154,6 @@ def shuffle_rq_table(
         np.save(output_dir / f"keys_{ngram_size}.npy", keys)
         np.save(output_dir / f"codes_{ngram_size}.npy", shuffled)
         np.save(output_dir / f"permutation_{ngram_size}.npy", permutation)
-        gains_path = source_dir / f"residual_gains_{ngram_size}.npy"
-        if gains_path.is_file():
-            gains = np.load(gains_path, allow_pickle=False)
-            if gains.shape != codes.shape:
-                raise ValueError(
-                    f"{gains_path.name} has shape {gains.shape}; expected {codes.shape}"
-                )
-            # Gains describe each destination n-gram's semantic RQ signal and stay
-            # aligned with keys. Re-aggregating them against shuffled codes destroys
-            # semantic ownership while retaining the exact same score definition.
-            np.save(output_dir / gains_path.name, gains)
-
         # A shuffled table must remain a complete runtime RQ address function,
         # not merely an offline key/code dictionary.  Dynamic OOVs use the same
         # frozen quantizer (and optional projector) as the semantic source table.

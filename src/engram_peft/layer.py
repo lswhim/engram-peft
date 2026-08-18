@@ -288,31 +288,6 @@ class HeadFactorizedGating(nn.Module):
         self.last_route_logits: torch.Tensor | None = None
         self.last_entropy = 0.0
         self.gating_entropy = torch.tensor(0.0)
-        self.forced_head_mask: torch.Tensor | None = None
-
-    def set_forced_head_mask(self, mask: torch.Tensor | None) -> None:
-        """Force a route for counterfactual training.
-
-        Accepted shapes are ``[B,H]``, ``[B,L,H]``, or ``[B,L,M,H]`` and are
-        broadcast to the computed route tensor.  A zero mask is the explicit null route.
-        """
-        self.forced_head_mask = mask
-
-    def _expanded_mask(self, gate: torch.Tensor) -> torch.Tensor | None:
-        mask = self.forced_head_mask
-        if mask is None:
-            return None
-        mask = mask.to(device=gate.device, dtype=gate.dtype)
-        if mask.dim() == 2:
-            mask = mask[:, None, None, :]
-        elif mask.dim() == 3:
-            mask = mask[:, :, None, :]
-        if mask.dim() != 4 or mask.shape[0] != gate.shape[0] or mask.shape[-1] != gate.shape[-1]:
-            raise ValueError(
-                "forced head mask must be [B,H], [B,L,H], or [B,L,M,H] "
-                f"for gate shape {tuple(gate.shape)}; got {tuple(mask.shape)}"
-            )
-        return mask
 
     @override
     def forward(
@@ -351,60 +326,57 @@ class HeadFactorizedGating(nn.Module):
             branch_logits.append(score)
 
         route_logits = torch.stack(branch_logits, dim=2)  # [B,L,M,H]
-        gate = route_logits.sigmoid()
-        dense_gate = gate
-
-        forced_mask = self._expanded_mask(gate)
-        if forced_mask is not None:
-            gate = gate * forced_mask
-        else:
+        dense_gate = route_logits.sigmoid()
+        selection = str(getattr(self.config, "head_router_selection", "learned"))
+        if selection == "learned":
+            # Fully differentiable competition: task loss decides which retrieved
+            # RQ heads matter for this token.  Preserve the original dense gate mass
+            # so gains cannot come from merely weakening the memory residual.
+            route_probability = route_logits.softmax(dim=-1)
+            gate = route_probability * dense_gate.sum(dim=-1, keepdim=True)
+            entropy_probability = route_probability.clamp_min(1e-8)
+            self.gating_entropy = -(
+                entropy_probability * entropy_probability.log()
+            ).sum(dim=-1).mean()
+        elif selection == "specificity":
+            gate = dense_gate
             top_k = int(getattr(self.config, "head_router_top_k", 0) or 0)
-            if 0 < top_k < self.num_heads:
-                selection = str(
-                    getattr(self.config, "head_router_selection", "context")
+            if not 0 < top_k < self.num_heads:
+                raise ValueError(
+                    "specificity routing requires head_router_top_k in "
+                    f"[1, {self.num_heads - 1}], got {top_k}"
                 )
-                if selection == "context":
-                    selection_logits = route_logits
-                elif selection in {
-                    "specificity",
-                    "rq_snr",
-                    "rq_signal",
-                    "rq_level_prior",
-                }:
-                    if head_selection_scores is None:
-                        raise ValueError(
-                            f"head_router_selection={selection!r} requires per-address scores"
-                        )
-                    if head_selection_scores.shape != route_logits.shape[:2] + (
-                        self.num_heads,
-                    ):
-                        raise ValueError(
-                            "head selection scores must be [B,L,H]; got "
-                            f"{tuple(head_selection_scores.shape)}"
-                        )
-                    selection_logits = head_selection_scores.to(
-                        device=route_logits.device, dtype=route_logits.dtype
-                    )[:, :, None, :].expand_as(route_logits)
-                else:
-                    raise ValueError(
-                        "head_router_selection must be 'context', 'specificity', 'rq_snr', "
-                        "'rq_signal', or 'rq_level_prior', "
-                        f"got {selection!r}"
-                    )
-                indices = selection_logits.topk(top_k, dim=-1).indices
-                hard_mask = torch.zeros_like(gate).scatter_(-1, indices, 1.0)
-                gate = gate * hard_mask
-            if bool(getattr(self.config, "head_router_use_null", False)):
-                threshold = float(
-                    getattr(self.config, "head_router_null_threshold", 0.0) or 0.0
+            if head_selection_scores is None:
+                raise ValueError(
+                    "head_router_selection='specificity' requires per-address scores"
                 )
-                use_memory = route_logits.amax(dim=-1, keepdim=True) > threshold
-                gate = gate * use_memory.to(gate.dtype)
+            if head_selection_scores.shape != route_logits.shape[:2] + (
+                self.num_heads,
+            ):
+                raise ValueError(
+                    "head selection scores must be [B,L,H]; got "
+                    f"{tuple(head_selection_scores.shape)}"
+                )
+            selection_logits = head_selection_scores.to(
+                device=route_logits.device, dtype=route_logits.dtype
+            )[:, :, None, :].expand_as(route_logits)
+            indices = selection_logits.topk(top_k, dim=-1).indices
+            hard_mask = torch.zeros_like(gate).scatter_(-1, indices, 1.0)
+            gate = gate * hard_mask
+            probability = route_logits.sigmoid().clamp(1e-6, 1 - 1e-6)
+            self.gating_entropy = -(
+                probability * probability.log()
+                + (1 - probability) * (1 - probability).log()
+            ).mean()
+        else:
+            raise ValueError(
+                "head_router_selection must be 'learned' or 'specificity', "
+                f"got {selection!r}"
+            )
 
         if bool(getattr(self.config, "head_router_preserve_mass", False)):
-            # Sparse routing must change which heads contribute, not silently reduce
-            # memory strength by k/H. Detaching the normalizer keeps gradients (and
-            # writes) restricted to selected heads. Explicit null routes stay zero.
+            # Sparse collision routing must change which heads contribute, not
+            # silently reduce memory strength by k/H.
             selected_mass = gate.sum(dim=-1, keepdim=True)
             dense_mass = dense_gate.sum(dim=-1, keepdim=True)
             scale = torch.where(
@@ -416,11 +388,6 @@ class HeadFactorizedGating(nn.Module):
 
         self.last_route_logits = route_logits
         self.last_gate = gate.detach()
-        probability = route_logits.sigmoid().clamp(1e-6, 1 - 1e-6)
-        self.gating_entropy = -(
-            probability * probability.log()
-            + (1 - probability) * (1 - probability).log()
-        ).mean()
         if self.config.enable_telemetry:
             self.last_entropy = self.gating_entropy.item()
 
@@ -683,12 +650,7 @@ class EngramLayer(nn.Module):
                     hc_mult=self.num_branches,
                     zero_init=config.gating_zero_init,
                 )
-                if config.head_router_selection in {
-                    "specificity",
-                    "rq_snr",
-                    "rq_signal",
-                    "rq_level_prior",
-                }:
+                if config.head_router_selection == "specificity":
                     if config.hash_backend != "rq":
                         raise ValueError(
                             "address-score head selection currently requires hash_backend='rq'"
@@ -698,27 +660,18 @@ class EngramLayer(nn.Module):
                             "address-score head selection requires rq_table_dir"
                         )
                     rq_mapping = RQNgramMapping(config.rq_table_dir)
-                    if config.head_router_selection == "rq_snr":
-                        score_array = rq_mapping.signal_to_interference_table()
-                    elif config.head_router_selection == "rq_signal":
-                        score_array = rq_mapping.residual_signal_table()
-                    elif config.head_router_selection == "rq_level_prior":
-                        score_array = rq_mapping.residual_level_prior_table()
-                    else:
-                        rows: list[np.ndarray] = []
-                        for n in rq_mapping.ngram_sizes:
-                            codes = rq_mapping.codes[n]
-                            for level in range(rq_mapping.num_levels):
-                                counts = np.bincount(
-                                    codes[:, level], minlength=rq_mapping.codebook_size
-                                ).astype(np.float32)
-                                # Distinct n-grams per bucket measure collision load. The
-                                # per-head z-score makes levels comparable without using
-                                # any downstream labels or evaluation examples.
-                                score = -np.log1p(counts)
-                                score = (score - score.mean()) / (score.std() + 1e-6)
-                                rows.append(score)
-                        score_array = np.stack(rows)
+                    rows: list[np.ndarray] = []
+                    for n in rq_mapping.ngram_sizes:
+                        codes = rq_mapping.codes[n]
+                        for level in range(rq_mapping.num_levels):
+                            counts = np.bincount(
+                                codes[:, level], minlength=rq_mapping.codebook_size
+                            ).astype(np.float32)
+                            # Collision-aware baseline: prefer less loaded buckets.
+                            score = -np.log1p(counts)
+                            score = (score - score.mean()) / (score.std() + 1e-6)
+                            rows.append(score)
+                    score_array = np.stack(rows)
                     specificity = torch.from_numpy(score_array).float()
                     if specificity.shape != (len(primes), max(primes)):
                         raise ValueError(

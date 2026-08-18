@@ -31,35 +31,6 @@ def test_semantic_rq_uses_preencoded_codes(tmp_path: Path) -> None:
     np.testing.assert_array_equal(actual, np.asarray([[[3, 4], [5, 6]]]))
 
 
-def test_signal_to_interference_uses_residual_gain_artifact(tmp_path: Path) -> None:
-    table = tmp_path / "table"
-    _table(table)
-    np.save(
-        table / "residual_gains_2.npy",
-        np.asarray([[0.8, 0.2], [0.1, 0.7]], dtype=np.float16),
-    )
-    mapping = RQNgramMapping(str(table), pad_id=0)
-    scores = mapping.signal_to_interference_table()
-    assert scores.shape == (2, 8)
-    assert np.isfinite(scores).all()
-    signal = mapping.residual_signal_table()
-    assert signal.shape == (2, 8)
-    assert np.isfinite(signal).all()
-    prior = mapping.residual_level_prior_table()
-    assert prior.shape == (2, 8)
-    assert np.isfinite(prior).all()
-    np.testing.assert_allclose(
-        np.repeat(prior[:, :1], prior.shape[1], axis=1), prior
-    )
-
-
-def test_signal_to_interference_requires_gain_artifact(tmp_path: Path) -> None:
-    _table(tmp_path / "table")
-    mapping = RQNgramMapping(str(tmp_path / "table"), pad_id=0)
-    with pytest.raises(FileNotFoundError, match="residual gain artifacts"):
-        mapping.signal_to_interference_table()
-
-
 def test_semantic_rq_never_silently_falls_back_without_lazy_cache(
     tmp_path: Path,
 ) -> None:

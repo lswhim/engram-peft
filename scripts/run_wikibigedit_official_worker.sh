@@ -39,7 +39,7 @@ case "$MODE" in
     ;;
   semantic_specificity)
     TABLE="$SEMANTIC_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   semantic_flatten)
@@ -48,7 +48,7 @@ case "$MODE" in
     ;;
   shuffled_specificity)
     TABLE="$SHUFFLED_TABLE"
-    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity,head_router_use_null=False,credit_loss_weight=0.0"
+    EXTRA="memory_fusion=head_factorized,head_router_top_k=4,head_router_preserve_mass=True,head_router_selection=specificity"
     METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},${EXTRA}"
     ;;
   shuffled_flatten)

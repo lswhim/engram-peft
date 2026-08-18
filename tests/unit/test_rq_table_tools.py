@@ -7,54 +7,10 @@ import numpy as np
 import pytest
 
 from engram_peft.rq_table_tools import (
-    bucket_residual_signal,
-    bucket_signal_to_interference,
     frequency_matched_codes,
-    residual_energy_gains,
     shuffle_rq_table,
     shuffled_codes,
 )
-
-
-def test_residual_gains_and_bucket_snr_reward_explained_signal() -> None:
-    vectors = np.asarray([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]], dtype=np.float32)
-    codes = np.asarray([[0, 0], [0, 0], [1, 1]], dtype=np.uint16)
-    codebooks = np.asarray(
-        [
-            [[0.7, 0.0], [0.0, 0.9]],
-            [[0.2, 0.0], [0.0, 0.1]],
-        ],
-        dtype=np.float32,
-    )
-    gains = residual_energy_gains(vectors, codes, codebooks)
-    assert gains.shape == codes.shape
-    assert np.all(gains[:, 0] > 0)
-    scores = bucket_signal_to_interference(codes, gains, codebook_size=2)
-    assert scores.shape == (2, 2)
-    assert np.isfinite(scores).all()
-
-
-def test_bucket_snr_preserves_absolute_rq_level_strength() -> None:
-    codes = np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.uint16)
-    gains = np.asarray(
-        [[0.8, 0.02], [0.8, 0.02], [0.6, 0.01], [0.6, 0.01]],
-        dtype=np.float32,
-    )
-    scores = bucket_signal_to_interference(codes, gains, codebook_size=2)
-
-    # Loads are identical, so the level that removes much more normalized
-    # residual energy must remain globally preferable.  A per-level z-score
-    # would incorrectly make the two levels indistinguishable here.
-    assert np.all(scores[0] > scores[1])
-
-
-def test_residual_signal_ablation_does_not_penalize_bucket_load() -> None:
-    codes = np.asarray([[0], [0], [1]], dtype=np.uint16)
-    gains = np.asarray([[0.4], [0.4], [0.4]], dtype=np.float32)
-    signal = bucket_residual_signal(codes, gains, codebook_size=2)
-    snr = bucket_signal_to_interference(codes, gains, codebook_size=2)
-    np.testing.assert_allclose(signal[0, 0], signal[0, 1], rtol=1e-6)
-    assert snr[0, 0] < snr[0, 1]
 
 
 def test_shuffled_codes_preserves_level_histograms_and_joint_rows() -> None:
@@ -91,10 +47,6 @@ def test_shuffle_rq_table_is_deterministic_and_auditable(tmp_path: Path) -> None
             source / f"codes_{ngram_size}.npy",
             np.asarray([[i % 4, (i // 2) % 4] for i in range(8)], dtype=np.uint16),
         )
-        np.save(
-            source / f"residual_gains_{ngram_size}.npy",
-            np.full((8, 2), 0.25, dtype=np.float16),
-        )
         (source / f"rq_{ngram_size}.faiss").write_bytes(f"rq-{ngram_size}".encode())
     (source / "projector_2.pt").write_bytes(b"projector")
 
@@ -116,10 +68,6 @@ def test_shuffle_rq_table_is_deterministic_and_auditable(tmp_path: Path) -> None
             np.load(second / f"codes_{ngram_size}.npy"),
         )
         assert (first / f"rq_{ngram_size}.faiss").read_bytes() == f"rq-{ngram_size}".encode()
-        np.testing.assert_array_equal(
-            np.load(first / f"residual_gains_{ngram_size}.npy"),
-            np.load(source / f"residual_gains_{ngram_size}.npy"),
-        )
     assert (first / "projector_2.pt").read_bytes() == b"projector"
     assert manifest["ngram_sizes"]["2"]["runtime_artifacts"] == [
         "rq_2.faiss",

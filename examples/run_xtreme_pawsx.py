@@ -31,6 +31,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="Qwen/Qwen3-1.7B")
     parser.add_argument("--rq_table_dir")
     parser.add_argument("--rq_cache_dir")
+    parser.add_argument(
+        "--rq_router",
+        choices=["flatten", "collision", "learned"],
+        default="flatten",
+        help="RQ memory readout. Ignored by non-RQ methods.",
+    )
     parser.add_argument("--output_dir", default="outputs/xtreme_pawsx")
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -59,7 +65,12 @@ def main() -> None:
     args.tokenizer = tokenizer
     args.pad_token_id = tokenizer.pad_token_id
 
-    run_dir = Path(args.output_dir) / f"{args.method}_seed{args.seed}"
+    run_name = (
+        f"rq_{args.rq_router}_seed{args.seed}"
+        if args.method == "rq"
+        else f"{args.method}_seed{args.seed}"
+    )
+    run_dir = Path(args.output_dir) / run_name
     result_path = run_dir / "metrics.json"
     run_dir.mkdir(parents=True, exist_ok=True)
     _write_result(
@@ -136,6 +147,7 @@ def main() -> None:
         "status": "evaluating",
         "protocol": "PAWS-X English full train -> 7-language test, zero target updates",
         "method": args.method,
+        "rq_router": args.rq_router if args.method == "rq" else None,
         "seed": args.seed,
         "train_examples": len(train_raw),
         "train_metrics": train_metrics,
