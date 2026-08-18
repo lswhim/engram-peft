@@ -180,6 +180,14 @@ CI `[−1.497,−0.595]`；Multi-hop `+0.480` pp，CI `[−1.241,+2.351]`。这�
 能提高写入与改写泛化，但会显著损害 locality；因此论文不能把 routing 的全部收益归因于 semantic geometry，
 必须用四路 difference-in-differences 检验 semantic ownership 是否带来额外收益或缓和该 trade-off。
 
+Strict load-matched flatten 的 seed 42 完整 trajectory 已完成。Semantic-flat − load-matched-flat 的
+Efficacy/Generalization 在 1K、5K、10K、50K 均同方向为正：`+1.184/+1.558`、
+`+0.996/+0.736`、`+1.188/+1.170`、`+1.323/+1.562` pp。50K 单 seed 逐 case bootstrap CI 为
+Efficacy `[+0.700,+1.929]`、Generalization `[+0.926,+2.178]`；Locality `+0.226` pp，
+CI `[−0.399,+0.846]`；Multi-hop `+0.243` pp，CI `[−0.782,+1.327]`。这是严格控制桶负载后仍保留
+semantic ownership 增益的积极 interim evidence，但正式主张必须等待 seeds 123/456，不能用单 seed
+CI 替代跨 seed 不确定性。
+
 ### 4.3 离线表覆盖与动态 OOV 审计
 
 对同一 50K chronological train stream 和固定 2,000-case evaluation manifest，按实际 tokenizer、`max_length=128`
