@@ -1,20 +1,21 @@
-# Collision-Aware Semantic Engram：论文与完整实验规划
+# Residual-Aware Semantic Engram：论文与完整实验规划
 
-> 版本：v3（2026-08-18）
+> 版本：v4（2026-08-18）
 > 目标：ICLR 2027 方法论文；标准 benchmark、完整规模、可证伪因果对照
 > 资源：4 × NVIDIA A100 40GB
-> 当前状态：10K 四方法 × 三 seed 已完成；50K scale-development 正在运行；官方八时间步主协议待运行
+> 当前状态：50K Semantic/Arithmetic/Randomized 三 seed 已完成；strict load-matched 与 residual-aware 3×3 正式矩阵正在运行；官方八时间步主协议待运行
 
 ## 1. 一句话故事
 
-Semantic hash 不只是把相似 n-gram 放到相近地址；它还产生了**具有不同碰撞负载的多个共享候选**。现有
-Engram 把所有候选无差别读取，因此有益语义共享与过载碰撞同时进入模型。我们利用地址表自身可离线统计的
-collision specificity，优先读取更可靠的 semantic buckets，在不增加可训练参数、不读取测试标签的条件下改善
-知识写入后的泛化。
+Semantic RQ 不只产生离散地址，还把每个 n-gram 分解为一个高信号 coarse code 和若干低能量 refinement codes。
+现有 Engram 把所有 RQ heads 无差别读取，既丢掉了这种 residual geometry，也让弱语义 refinement 与过载碰撞
+等权进入模型。我们用冻结量化器对每一级实际消除的 embedding residual energy 作为 semantic signal，并除以
+bucket collision load 得到无需训练、可离线查表的 signal-to-interference score；稳定读取 coarse memory，按地址
+质量动态选择 refinement memory。
 
 暂定标题：
 
-> **Trust the Address, Not Every Collision: Collision-Aware Semantic Memory for Language Models**
+> **Read the Residual: Coarse-to-Fine Semantic Memory for Language Models**
 
 ## 2. Motivation：为什么不能只做 Semantic RQ
 
@@ -34,7 +35,7 @@ RQ 的 8 个 residual codes 是 8 个并行地址候选，并不天然构成“�
 
 > **当 semantic addressing 主动制造共享时，模型应该信任哪些 collision？**
 
-## 3. 方法：Collision-Aware Semantic Engram
+## 3. 方法：Residual-Aware Semantic Engram
 
 ### 3.1 动态语义地址
 
@@ -48,23 +49,33 @@ n-gram -> frozen Qwen3-Embedding -> frozen FAISS RQ -> M discrete codes
 encoder/codebook。不能把词典外 n-gram 回退为 arithmetic hash，否则 semantic generalization 在真正的新表达上
 会消失。
 
-### 3.2 地址可靠性
+### 3.2 Semantic signal-to-interference
 
-只用训练地址表，统计第 `j` 个 codebook 中 bucket `c` 所包含的 distinct n-gram 数：
+对训练地址表中的 n-gram embedding `x_g`，令 `r_{g,j-1}` 和 `r_{g,j}` 分别为第 `j` 级量化前后的 residual，定义
+该级解释的归一化语义信号：
 
 \[
-L_{j,c}=|\{g:q_j(g)=c\}|,\qquad
-S_{j,c}=-\log(1+L_{j,c}).
+G_{g,j}=\frac{\lVert r_{g,j-1}\rVert_2^2-\lVert r_{g,j}\rVert_2^2}
+{\lVert x_g\rVert_2^2}.
 \]
 
-`L` 越大，bucket 越容易混入无关模式；`S` 越高，地址越 specific。该统计：
+对 codebook `j` 的 bucket `c`，以其中 positive residual gain 的均值作为 semantic signal，以 distinct-key load
+作为 interference：
+
+\[
+R_{j,c}=\log\!\left(\operatorname{mean}_{g:q_j(g)=c}[G_{g,j}]_+\right)
+-\log(1+|\{g:q_j(g)=c\}|).
+\]
+
+`R` 保留跨 RQ level 的绝对尺度；禁止 per-level z-score，因为它会把“解释 60% residual 的 coarse level”和
+“解释 1% 的 late refinement level”错误地等权。该统计：
 
 - 不使用下游测试 query、答案或 evaluation label；
 - 不增加可训练参数；
 - 可随 RQ 表离线构建并与 memory 一起 offload；
 - 对运行时动态编码得到的 code 同样可查询。
 
-### 3.3 参数匹配的 head selection
+### 3.3 Coarse-anchor + conditional-refinement readout
 
 把原本 flatten 后的一次投影按输入 block 精确分解：
 
@@ -72,18 +83,23 @@ S_{j,c}=-\log(1+L_{j,c}).
 W^V[e_1;\ldots;e_H]=\sum_j W^V_j e_j.
 \]
 
-按当前 token 实际访问 bucket 的 `S_{j,c}` 选择 top-k heads：
+按当前 token 实际访问 bucket 的 `R_{j,c}` 选择 top-k heads：
 
 \[
-\mathcal I_t=\operatorname{TopK}_j S_{j,c_{t,j}},\qquad
+\mathcal I_t=\operatorname{TopK}_j R_{j,c_{t,j}},\qquad
 m_t=\sum_{j\in\mathcal I_t}a_{t,j}W^V_je_{t,j}.
 \]
 
-其中 `a` 仍由原始 context gate 决定，specificity 只决定读哪些 heads。为排除“少读 head 导致注入幅值变小”
+其中 `a` 仍由原始 context gate 决定，residual reliability 只决定读哪些 heads。为排除“少读 head 导致注入幅值变小”
 的混淆，selected gate mass 被重标定为与 dense flatten 相同。正式配置冻结为 `k=4`。
 
-方法的核心不是额外 router，而是把 semantic address 中已经存在、却被 flatten 丢弃的**地址可靠性信号**用于
-memory readout。
+当前 50K 地址审计显示，2/3-gram 的第一级分别解释约 `63.8%/56.6%` 初始 residual energy，后续单级约
+`0.7%–2.1%`。因此 top-k 的预期结构不是任意稀疏化，而是两个稳定 coarse anchors 加随 bucket 改变的 refinement
+heads。Runtime-shuffled control 保留 codes/load，却切断 residual gain 与地址 ownership；若其 bucket score 退化为
+近似 level prior，而 Semantic 仍能动态选择 refinement，就构成方法机制的直接可证伪预测。
+
+旧的 `-log(1+load)` specificity 仍作为参数匹配 baseline：50K interaction 已证明它是通用 capacity control，
+不是 semantic-specific 方法。
 
 ### 3.4 为什么规模越大越可能显出优势：collision 的 bias–variance 视角
 
@@ -99,13 +115,13 @@ Arithmetic hash 使 `B_b` 与语义关系近似独立；随着 writes 增多，�
 概率，使其中一部分 collision 成为有益参数共享。但 semantic bucket 仍可能因高频、多义或量化边界而混杂，因此
 不是“semantic collision 都好”，而是形成了多个 reliability 不同的候选共享路径。
 
-当前 specificity `-log(1+L)` 是对干扰风险的保守、train-only proxy：它不声称直接测得 gradient alignment，只利用
-在其他条件相同时，更大的 distinct-key load 提供更多无关碰撞机会。RQ 的多 head 结构允许查询在不增加参数的情况下
-选择低风险路径。这一解释给出三个可证伪预测：
+Residual-aware score 同时测量量化器对输入 embedding 的解释强度和共享 bucket 的干扰风险；它不声称直接测得
+gradient alignment，但比单独的 load proxy 多使用了只存在于 semantic RQ 的 residual geometry。RQ 的多 head
+结构允许查询在不增加可训练参数的情况下选择高 signal-to-interference 路径。这一解释给出三个可证伪预测：
 
 1. Semantic-flat 相对 Arithmetic 的优势应随 cumulative writes / collision pressure 增大；
 2. 在相同 access-weighted load 下，Semantic 应优于 code-vector ownership 被置换的 control；
-3. 在 Semantic 地址内，selected low-load heads 的 update-gradient agreement / target entropy 应优于 bottom-load heads，
+3. 在 Semantic 地址内，selected high-R heads 的 update-gradient agreement / target entropy 应优于 bottom-R heads，
    且该差异能预测 query-level generalization gain。
 
 前两个预测由 scaling 与 load-matched 2×2 主表检验；第三个必须通过 gradient/target-conflict probe 与
@@ -436,39 +452,40 @@ address specificity significantly more predictive of future update compatibility
 
 ## 8. 四卡执行顺序
 
-### Phase A：方法开发与因果矩阵（完成）
+### Phase A：Semantic address 与 load-only baseline（完成）
 
 - 修复运行时 OOV 必须真实 embedding→RQ 的实现；
 - 修复多 seed 实际初始化相同的问题；
 - 完成地址审计、mass-preserving control、k sweep；
 - 完成 10K 四方法 × 三 seed。
 
-### Phase B：WikiBigEdit-50K scale-development（运行中）
+### Phase B：WikiBigEdit-50K residual-aware 正式矩阵（运行中）
 
-- GPU0/1/2：各固定一个 seed，顺序运行 Semantic flatten、Shuffled flatten、Shuffled aware、Semantic aware；
-- GPU3：Arithmetic 三 seed；
-- 共 15 个 50K 完整训练，每个评测 1K/5K/10K/50K checkpoint；用于验证规模稳定性，不替代官方主表。
+- 已完成 Arithmetic、Semantic flatten、Runtime-shuffled flatten/specificity、Semantic specificity 三 seed；
+- 正在补齐 strict load-matched flatten 三 seed；
+- 按 Latin-square 运行 Semantic/Runtime-shuffled/strict-loadmatched × residual-aware 三 seed；
+- 每个 run 均训练 2500 steps 并完整评测 1K/5K/10K/50K checkpoint；不以缩步结果筛选方法。
 
 ### Phase C：官方八 timestep 主表、100K development 与外部 benchmark
 
 - 从官方八个 JSON timestep 重建包含 Personas 的完整 manifest；
 - 使用官方 `Q:/A:` target-token 与 pre/post locality-preservation evaluator；
-- 构建严格匹配各冻结 train split 的 RQ 表和 specificity prior；
+- 构建严格匹配各冻结 train split 的 RQ 表和 residual-gain statistics；
 - 运行官方 lifelong 主表，并补充 100K development curve；
 - 并行 CounterFact、ZsRE、Ripple/MQuAKE。
 
 ### Phase D：机制、效率和尺度
 
-- random/bottom-specific intervention；
+- random/bottom-residual intervention；
 - query-level paired bootstrap 与 collision-load 分桶；
 - cold/warm latency、cache hit、throughput、CPU offload 和 memory footprint；
 - 至少增加一个 backbone 尺度或官方 WikiBigEdit backbone。
 
 ## 9. 预期贡献
 
-1. **问题发现**：semantic memory 的瓶颈不是能否制造共享，而是地址碰撞的可靠性高度不均；
-2. **方法贡献**：无需额外可训练 router，直接从冻结 semantic address table 导出 collision-aware sparse readout；
-3. **因果贡献**：用 Semantic/Shuffled × aware/flatten 的交互实验分离语义几何、共享容量和一般稀疏化；
+1. **问题发现**：semantic memory 的瓶颈不是能否制造共享，而是 coarse semantic signal 与 refinement interference 被无差别读取；
+2. **方法贡献**：无需额外可训练 router，从冻结 RQ residual geometry 导出 signal-to-interference sparse readout；
+3. **因果贡献**：用 Semantic/Shuffled/strict-loadmatched × residual-aware/flatten 的交互实验分离语义几何、共享容量和一般稀疏化；
 4. **实证贡献**：在大规模 lifelong editing、外部 KE benchmark 与干预实验中验证 transfer–interference Pareto；
 5. **系统贡献**：保留动态 OOV semantic encoding + persistent cache + offload，并如实报告冷/热路径成本。
 
@@ -480,42 +497,43 @@ address specificity significantly more predictive of future update compatibility
   也没有用 bucket occupancy 决定读取哪些 hash heads。
 - **Engram-Nine** 用 MPHF 给高频 n-gram 增加 collision-free hot tier，结论是消除碰撞并不稳定改善性能，且指出
   gating credit assignment 可能比索引精度更关键。我们的假设不是“碰撞越少越好”，而是 semantic address
-  产生的候选碰撞具有不同可靠性，应保留共享并选择性读取；`bottom-specific` 和 interaction 实验必须证明这一区别。
+  产生的候选碰撞具有不同 residual signal，应保留共享并选择性读取；`bottom-residual` 和 interaction 实验必须证明这一区别。
 - **Tokenizer-Agnostic Engram Module**（arXiv:2607.29065）把 token n-gram 改为 byte-equivalent sequence，并用
   polynomial hash 获得跨 tokenizer 的地址等价性。它解决的是 tokenizer portability，不使用 semantic embedding、
-  residual quantization、bucket-load reliability 或 lifelong editing。它与本工作的共同点仅是都修改了地址层。
+  residual-energy routing 或 lifelong editing。它与本工作的共同点仅是都修改了地址层。
 - **Semantic-ID / RQ 工作**主要位于生成式推荐与检索，已经研究 code collision、动态 code 长度及 tail-item
   generalization。因此“RQ 能产生 semantic IDs”本身不是贡献；本工作的 NLP 新意必须来自：RQ code 作为可 offload
-  的 Engram memory addresses、地址诱导的参数共享、以及由 train-only collision statistics 控制的 parameter-matched
+  的 Engram memory addresses、地址诱导的参数共享、以及由 train-only residual geometry 控制的 parameter-matched
   readout。
 - **HashedNets / hash embeddings**早已把碰撞视为参数共享或压缩机制。因此论文不能把“bucket load”包装成全新概念；
-  贡献是它在 semantic conditional memory 中作为无需训练 router 的可靠性信号，并通过完整 2×2 因果实验验证。
+  它只能作为 interference 项；新贡献必须来自 residual signal 与 load 的联合定义，并通过完整因果矩阵验证。
 
-当前检索没有发现与“frozen semantic RQ Engram addresses + per-query occupancy-based head selection + mass-preserving
+当前检索没有发现与“frozen semantic RQ Engram addresses + per-query residual-aware head selection + mass-preserving
 readout + lifelong knowledge-update evaluation”同构的方法，但这只是截至检索日期的公开文献审计，不是绝对无人做过的
 证明。投稿前必须再次检索 arXiv/OpenReview，并把上述四个组成部分逐项对比，而不是依赖标题关键词。
 
 ### 10.1 可证伪的新颖性门槛
 
-如果最终只观察到 `Semantic-RQ > Arithmetic`，而 collision-aware 相对 Semantic-flatten 的 interaction 不稳定，
+如果最终只观察到 `Semantic-RQ > Arithmetic`，而 residual-aware 相对 Semantic-flatten 的 interaction 不稳定，
 那么工作最多是一个 semantic-address engineering follow-up，方法贡献不足以支撑 ICLR 主会。只有同时满足以下条件，
 才能保留当前论文定位：
 
-1. collision-aware 的收益在 50K/官方多时间步与至少一个外部 benchmark 上复现；
-2. shuffled、random-k、bottom-specific 排除普通稀疏化和幅值缩放解释；
-3. bucket load 能在 query level 预测 transfer/interference，并由干预实验支持；
+1. residual-aware 的收益在 50K/官方多时间步与至少一个外部 benchmark 上复现；
+2. shuffled、strict-loadmatched、random-k、bottom-residual 排除普通稀疏化和幅值缩放解释；
+3. residual signal-to-interference 能在 query level 预测 transfer/interference，并由干预实验支持；
 4. 动态 OOV 冷路径、cache 热路径和 offload 成本可测量，证明方法没有悄悄放弃 Engram 的系统属性。
 
 ## 11. Reviewer 视角的主要风险
 
-- **“只是 heuristic top-k”**：必须用 interaction、bottom/random intervention 和 load–error 分析证明 specificity 是地址
-  可靠性，而非任意剪枝。
+- **“只是 heuristic top-k”**：必须用 interaction、bottom/random intervention 和 residual-score–error 分析证明
+  signal-to-interference 是地址可靠性，而非任意剪枝。
 - **“只在一个 benchmark 有效”**：CounterFact/ZsRE/Ripple 至少一个必须复现。
 - **“baseline 不够”**：加入外部 lifelong KE 与 retrieval baseline；内部 ablation 不能替代领域 SOTA。
 - **“semantic encoder 成本太高”**：报告 cold/warm latency和 cache hit，不把首次 4B forward 隐藏为 O(1)。
 - **“训练表统计泄漏”**：统计严格只来自 train address table；评测 query 只查冻结 statistic。
-- **“RQ hierarchy 叙事过度”**：不再声称有序语义层级，方法只依赖可测量 collision load。
+- **“RQ hierarchy 叙事过度”**：只声称可测量的 residual-energy hierarchy，不把 code level 解释成关系/实体等
+  人类语义层级；必须报告各级 gain 和实际 head-selection 分布。
 
 目前最合理的论文核心已经从失败的 CREDIT/utility-gate 假设收敛为：
 
-> **Semantic hashing makes sharing possible; collision-aware addressing makes that sharing trustworthy.**
+> **Semantic hashing makes sharing possible; residual-aware readout decides which semantic refinements are worth trusting.**
