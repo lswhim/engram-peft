@@ -104,6 +104,12 @@ heads。Runtime-shuffled control 保留 codes/load，却切断 residual gain 与
 为 `66` 种、熵 `0.699`。三种地址的 2/3-gram level-0 选择率均为 `100%`，所以差异来自 conditional
 refinement，而非 coarse anchor 是否存在。该审计不使用语言模型 forward 或下游标签。
 
+Signal-only 预注册消融进一步分离两个因子：Semantic 下 residual signal-only 有 `90` 种 sets、熵 `0.751`，联合
+signal-to-interference 为 `91/0.842`；Runtime-shuffled 分别为 `2/0.473` 与 `2/0.512`；strict load-matched
+则从 signal-only 的 `2/0.247` 增至联合 score 的 `66/0.699`。因此 residual signal 主要确定绝对 coarse-to-fine
+层级，collision penalty 在同级 buckets 间引入 conditional refinement。选择熵本身不等于任务质量，必须用完整
+三-seed signal-only/load-only/joint/flatten 任务消融验证哪种组合真正改善 transfer–interference。
+
 旧的 `-log(1+load)` specificity 仍作为参数匹配 baseline：50K interaction 已证明它是通用 capacity control，
 不是 semantic-specific 方法。
 
