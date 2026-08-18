@@ -318,6 +318,24 @@ OOV deterministic randomization 的结果也需分别切片。
 
 若公开实现无法支持 Qwen3，优先增加官方支持 backbone 的对应尺度复现实验，而不是自行做不可比的近似版本。
 
+WikiBigEdit 官方论文与仓库的基线审计进一步固定如下最低要求：
+
+1. **RAG（必须同 Qwen3 重跑）**：官方配置为 angular ANN、top-k=2、100 trees；每个 timestep 只检索截至
+   当前时刻可见的 edits，禁止未来 memory。报告五轴、检索 recall、index size、建库时间以及端到端 inference
+   latency。官方结果显示 RAG 是规模化更新的强上界，因此不能省略。
+2. **LoRA-FT（必须同 Qwen3 重跑）**：当前 continual LoRA worker 对应这一类，但超参必须增加官方风格的
+   `rank=4, alpha=8, 10 passes/timestep` 对齐版本或给出预算匹配解释。
+3. **LoRA-Merge（必须实现）**：官方配置逐 timestep merge，`merge_alpha=0.25`；它是 WikiBigEdit 论文中
+   强于许多专用编辑方法的简单基线，不能只跑连续 LoRA adapter。
+4. **ROME/R-ROME/MEMIT/WISE（至少官方 backbone 的 10K 复现或引用+协议桥接）**：原论文显示前三者在
+   数百至数千 edits 内崩溃、WISE 约 10K 回落。若 Qwen3 缺乏可靠层定位，不应伪造近似实现；应在官方支持的
+   Llama-2-7B 上运行官方代码，并同时在该 backbone 跑 Arithmetic/Semantic Engram 形成桥接表。
+
+来源：[WikiBigEdit paper](https://arxiv.org/abs/2503.05683)、
+[official repository](https://github.com/ExplainableML/WikiBigEdit)、
+[official RAG config](https://github.com/ExplainableML/WikiBigEdit/blob/main/EasyEdit_Experiments/hydra/experiments/rag_llama2.yaml)、
+[official LoRA-Merge config](https://github.com/ExplainableML/WikiBigEdit/blob/main/EasyEdit_Experiments/hydra/experiments/lora_merge_llama2.yaml)。
+
 ## 6. 消融与机制验证
 
 ### 6.1 已冻结的开发消融
