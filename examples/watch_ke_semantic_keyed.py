@@ -12,7 +12,7 @@ from typing import Any
 
 
 DATASETS = ("counterfact", "zsre")
-METHODS = ("arithmetic", "semantic_keyed")
+METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
 METRICS = ("efficacy", "paraphrase", "specificity", "harmonic_score")
 LABELS = {
     "efficacy": "Efficacy",
