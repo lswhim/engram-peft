@@ -321,12 +321,21 @@ def xtreme_rows(root: Path, family: str, logdir: Path) -> list[str]:
                 status = "评测中"
             log_name = f"{family}_{method}.log"
             step = step_cell(logdir, log_name)
-            rows.append(
-                f"<tr><th>{html.escape(method)}</th>"
-                f"<td><span class='run'>运行中 · {html.escape(status)}</span>"
-                f" <span class='step'>{html.escape(step)}</span></td>"
-                f"<td>—</td></tr>"
-            )
+            log_path = logdir / log_name
+            if log_is_stale(log_path):
+                rows.append(
+                    f"<tr><th>{html.escape(method)}</th>"
+                    f"<td><span class='queue'>已停止</span>"
+                    f" <span class='step'>{html.escape(step)}</span></td>"
+                    f"<td>—</td></tr>"
+                )
+            else:
+                rows.append(
+                    f"<tr><th>{html.escape(method)}</th>"
+                    f"<td><span class='run'>运行中 · {html.escape(status)}</span>"
+                    f" <span class='step'>{html.escape(step)}</span></td>"
+                    f"<td>—</td></tr>"
+                )
         else:
             rows.append(
                 f"<tr><th>{html.escape(method)}</th>"
