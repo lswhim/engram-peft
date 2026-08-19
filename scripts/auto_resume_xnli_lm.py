@@ -318,8 +318,8 @@ def main() -> None:
         # XNLI keyed is intentionally running on 1号机 (PID 18414).  This
         # scheduler only manages 3号机 and cannot see that process, so it must
         # not be in the scheduling list or it would launch a duplicate.
-        TrainJob("xnli_semantic_flatten", "scripts/run_xnli_semantic_keyed_worker.sh",
-                 "semantic_flatten", "preencode_xnli_keyed"),
+        # XNLI flatten is intentionally launched manually on 3号机 GPU7
+        # (PID 75524) and must not be rescheduled by this process either.
         TrainJob("lm_semantic_keyed", "scripts/run_lm_100m_worker.sh",
                  "semantic_keyed", "preencode_lm_keyed"),
         TrainJob("lm_semantic_flatten", "scripts/run_lm_100m_worker.sh",
