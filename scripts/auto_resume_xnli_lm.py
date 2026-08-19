@@ -89,11 +89,13 @@ def running_pids() -> set[int]:
 
 
 def gpu_is_free(index: int) -> bool:
-    """Free means no visible compute app AND low allocated memory.
+    """Free means no visible compute app AND ample free memory.
 
     The shared pod's nvidia-smi can list compute processes owned by other
     namespaces that are invisible under /proc.  Requiring both conditions
     avoids placing a worker on a card that is actually busy elsewhere.
+    Qwen3-1.7B + Engram needs roughly 15-20GB, so only treat a card as
+    schedulable when at least 20GB is genuinely free.
     """
     apps = subprocess.run(
         [
@@ -110,11 +112,11 @@ def gpu_is_free(index: int) -> bool:
         if line.strip():
             return False
     try:
-        used = int(
+        free = int(
             subprocess.run(
                 [
                     "nvidia-smi",
-                    "--query-gpu=memory.used",
+                    "--query-gpu=memory.free",
                     f"--id={index}",
                     "--format=csv,noheader,nounits",
                 ],
@@ -125,7 +127,7 @@ def gpu_is_free(index: int) -> bool:
         )
     except (ValueError, TypeError):
         return False
-    return used < 4000
+    return free >= 20_000
 
 
 def process_uses_gpu(pid: int, index: int) -> bool:
@@ -214,16 +216,16 @@ def flatten_cache_ready(seed: int = 42) -> bool:
 
 
 def find_free_gpu(gpus: list[int]) -> int | None:
-    # Prefer the least-allocated free GPU to avoid leftovers on shared nodes.
+    # Prefer the card with the most free memory among schedulable cards.
     candidates: list[tuple[int, int]] = []
     for idx in gpus:
         if gpu_is_free(idx):
             try:
-                used = int(
+                free = int(
                     subprocess.run(
                         [
                             "nvidia-smi",
-                            "--query-gpu=memory.used",
+                            "--query-gpu=memory.free",
                             f"--id={idx}",
                             "--format=csv,noheader,nounits",
                         ],
@@ -234,10 +236,10 @@ def find_free_gpu(gpus: list[int]) -> int | None:
                 )
             except (ValueError, TypeError):
                 continue
-            candidates.append((used, idx))
+            candidates.append((free, idx))
     if not candidates:
         return None
-    candidates.sort()
+    candidates.sort(reverse=True)
     return candidates[0][1]
 
 
