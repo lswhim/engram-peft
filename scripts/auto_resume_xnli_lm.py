@@ -185,10 +185,12 @@ def copy_flatten_caches(seed: int = 42) -> None:
     for src_dir, dst_dir in pairs:
         src = src_dir / "semantic_codes.sqlite3"
         dst = dst_dir / "semantic_codes.sqlite3"
-        if not src.exists() or dst.exists():
+        if not src.exists():
             continue
         dst_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        temporary = dst.with_suffix(".sqlite3.tmp")
+        shutil.copy2(src, temporary)
+        os.replace(temporary, dst)
 
 
 def flatten_cache_ready(seed: int = 42) -> bool:
