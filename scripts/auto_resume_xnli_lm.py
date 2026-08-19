@@ -294,6 +294,9 @@ def launched_worker_alive(job: TrainJob) -> bool:
     """Return True when a worker for this job is still running."""
     if job.worker.endswith("run_lm_100m_worker.sh"):
         needle = f"bash scripts/run_lm_100m_worker.sh .*{job.mode}"
+    elif job.worker.endswith("run_xnli_semantic_keyed_worker.sh"):
+        router = "semantic_keyed" if job.mode == "semantic_keyed" else "flatten"
+        needle = f"python -u examples/run_xtreme_xnli.py .*rq_router {router}"
     else:
         # The XNLI worker may have been launched manually (directly through
         # run_xtreme_xnli.py), so detect by the router instead of the wrapper.
@@ -334,8 +337,8 @@ def main() -> None:
         # XNLI keyed is intentionally running on 1号机 (PID 18414).  This
         # scheduler only manages 3号机 and cannot see that process, so it must
         # not be in the scheduling list or it would launch a duplicate.
-        # XNLI flatten is intentionally launched manually on 3号机 GPU7
-        # (PID 75524) and must not be rescheduled by this process either.
+        TrainJob("xnli_semantic_flatten", "scripts/run_xnli_semantic_keyed_worker.sh",
+                 "semantic_flatten", "preencode_xnli_keyed"),
         TrainJob("lm_semantic_keyed", "scripts/run_lm_100m_worker.sh",
                  "semantic_keyed", "preencode_lm_keyed"),
         TrainJob("lm_semantic_flatten", "scripts/run_lm_100m_worker.sh",
@@ -375,7 +378,15 @@ def main() -> None:
                             state_for(job.name),
                             {"name": job.name, "status": "queued", "updated_at": now()},
                         )
-                    print(f"[auto-resume] {job.name} worker died; requeued", flush=True)
+                        print(f"[auto-resume] {job.name} worker died; requeued", flush=True)
+                    else:
+                        gpu = st.get("gpu")
+                        if gpu is not None:
+                            reserved.add(int(gpu))
+                            print(
+                                f"[auto-resume] {job.name} alive; keeping gpu {gpu} reserved",
+                                flush=True,
+                            )
                     continue
                 if launched_this_pass:
                     # Only start one worker per pass: the free-GPU probe can be
