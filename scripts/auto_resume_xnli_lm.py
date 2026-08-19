@@ -127,7 +127,7 @@ def gpu_is_free(index: int) -> bool:
         )
     except (ValueError, TypeError):
         return False
-    return free >= 20_000
+    return free >= 32_000
 
 
 def process_uses_gpu(pid: int, index: int) -> bool:
