@@ -58,66 +58,71 @@ def collect_misses(
     position in a text batch is expanded to all n-gram windows, matched against
     the offline table with searchsorted, and only genuinely unseen keys survive.
     """
-    encoded = tokenizer(
-        texts,
-        truncation=True,
-        max_length=max_length,
-        padding="max_length",
-        return_tensors="np",
-    )
-    input_ids = np.asarray(encoded["input_ids"], dtype=np.int64)
-    attention = np.asarray(encoded["attention_mask"], dtype=np.uint8)
-    compressed = np.asarray(compressor.map_ids(input_ids), dtype=np.int64)
+    # Process each text independently with a small internal window budget.
+    # A single 2k-row, 1024-token batch expands to millions of n-gram windows;
+    # chunking keeps the sort/dedup peak bounded and avoids hour-long stalls.
+    CHUNK = 128  # rows per collect chunk
+    per_order: dict[int, dict[int, np.ndarray]] = {
+        order: {"keys": [], "windows": []} for order in orders
+    }
+
+    for start in range(0, len(texts), CHUNK):
+        chunk_texts = texts[start : start + CHUNK]
+        encoded = tokenizer(
+            chunk_texts,
+            truncation=True,
+            max_length=max_length,
+            padding="max_length",
+            return_tensors="np",
+        )
+        input_ids = np.asarray(encoded["input_ids"], dtype=np.int64)
+        attention = np.asarray(encoded["attention_mask"], dtype=np.uint8)
+        compressed = np.asarray(compressor.map_ids(input_ids), dtype=np.int64)
+
+        for order in orders:
+            batch, length = compressed.shape
+            if length < order:
+                continue
+            windows = np.lib.stride_tricks.sliding_window_view(
+                compressed, window_shape=order, axis=1
+            ).reshape(-1, order)
+            keys = np.zeros(windows.shape[0], dtype=np.int64)
+            for offset in range(order):
+                keys = keys * base + windows[..., offset].astype(np.int64)
+            valid = np.zeros((batch, length), dtype=bool)
+            valid[:, order - 1 : -1] = (
+                attention[:, order - 1 : -1].astype(bool)
+                & attention[:, order:].astype(bool)
+            )
+            flat_valid = valid[:, order - 1 :].reshape(-1)
+            keys = keys[flat_valid]
+            windows = windows[flat_valid]
+
+            pos = np.searchsorted(table_keys[order], keys)
+            hit = (pos < len(table_keys[order])) & (
+                table_keys[order][np.clip(pos, 0, len(table_keys[order]) - 1)]
+                == keys
+            )
+            keys = keys[~hit]
+            windows = windows[~hit]
+            if keys.size == 0:
+                continue
+
+            # np.unique keeps the first occurrence, exactly what the original
+            # lexsort did, but is substantially cheaper for small chunks.
+            unique_keys, first_idx = np.unique(keys, return_index=True)
+            per_order[order]["keys"].append(unique_keys)
+            per_order[order]["windows"].append(windows[first_idx])
 
     result: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for order in orders:
-        batch, length = compressed.shape
-        if length < order:
-            result[order] = (
-                np.empty(0, dtype=np.int64),
-                np.empty((0, order), dtype=np.int64),
-            )
+        if not per_order[order]["keys"]:
+            result[order] = (np.empty(0, dtype=np.int64), np.empty((0, order), dtype=np.int64))
             continue
-        windows = np.lib.stride_tricks.sliding_window_view(
-            compressed, window_shape=order, axis=1
-        )  # [batch, length-order+1, order]
-        flat_windows = windows.reshape(-1, order)
-        keys = np.zeros(flat_windows.shape[0], dtype=np.int64)
-        for offset in range(order):
-            keys = keys * base + flat_windows[..., offset].astype(np.int64)
-        # valid context positions: token t has a real next token (attention[t+1])
-        valid = np.zeros((batch, length), dtype=bool)
-        valid[:, order - 1 : -1] = (
-            attention[:, order - 1 : -1].astype(bool)
-            & attention[:, order:].astype(bool)
-        )
-        flat_valid = valid[:, order - 1 :].reshape(-1)
-        keys = keys[flat_valid]
-        flat_windows = flat_windows[flat_valid]
-
-        pos = np.searchsorted(table_keys[order], keys)
-        hit = (pos < len(table_keys[order])) & (
-            table_keys[order][np.clip(pos, 0, len(table_keys[order]) - 1)] == keys
-        )
-        keys = keys[~hit]
-        flat_windows = flat_windows[~hit]
-        if keys.size == 0:
-            result[order] = (
-                np.empty(0, dtype=np.int64),
-                np.empty((0, order), dtype=np.int64),
-            )
-            continue
-
-        # Keep the first window per unique key by sorting on (key, position).
-        order_ids = np.arange(keys.size)
-        sort_idx = np.lexsort((order_ids, keys))
-        sorted_keys = keys[sort_idx]
-        sorted_windows = flat_windows[sort_idx]
-        first_mask = np.ones(keys.size, dtype=bool)
-        first_mask[1:] = sorted_keys[1:] != sorted_keys[:-1]
-        unique_keys = sorted_keys[first_mask]
-        first_windows = sorted_windows[first_mask]
-        result[order] = (unique_keys, first_windows)
+        keys = np.concatenate(per_order[order]["keys"])
+        windows = np.concatenate(per_order[order]["windows"])
+        unique_keys, first_idx = np.unique(keys, return_index=True)
+        result[order] = (unique_keys, windows[first_idx])
     return result
 
 
