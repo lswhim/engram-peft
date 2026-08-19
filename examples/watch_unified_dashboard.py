@@ -12,6 +12,9 @@ import argparse
 import html
 import json
 import re
+import sys
+import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -261,14 +264,15 @@ def main() -> None:
     args = parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     while True:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        temporary = args.output.with_suffix(".tmp.html")
-        temporary.write_text(render(args.root, args.logdir, now), encoding="utf-8")
-        temporary.replace(args.output)
+        try:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            temporary = args.output.with_suffix(".tmp.html")
+            temporary.write_text(render(args.root, args.logdir, now), encoding="utf-8")
+            temporary.replace(args.output)
+        except Exception:
+            print(traceback.format_exc(), file=sys.stderr, flush=True)
         if args.once:
             break
-        import time
-
         time.sleep(args.interval)
 
 
