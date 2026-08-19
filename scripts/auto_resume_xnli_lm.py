@@ -89,27 +89,11 @@ def running_pids() -> set[int]:
 
 
 def gpu_is_free(index: int) -> bool:
-    """Free means no compute process on that GPU and low allocated memory."""
-    try:
-        used = int(
-            subprocess.run(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=memory.used",
-                    f"--id={index}",
-                    "--format=csv,noheader,nounits",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.strip()
-        )
-    except (ValueError, TypeError):
-        return False
+    """Free means no active compute process on that GPU."""
     apps = subprocess.run(
         [
             "nvidia-smi",
-            "--query-compute-apps=pid,used_memory",
+            "--query-compute-apps=pid",
             f"--id={index}",
             "--format=csv,noheader,nounits",
         ],
@@ -120,7 +104,7 @@ def gpu_is_free(index: int) -> bool:
     for line in apps.splitlines():
         if line.strip():
             return False
-    return used < 4000
+    return True
 
 
 def process_uses_gpu(pid: int, index: int) -> bool:
@@ -214,10 +198,31 @@ def flatten_cache_ready(seed: int = 42) -> bool:
 
 
 def find_free_gpu(gpus: list[int]) -> int | None:
+    # Prefer the least-allocated free GPU to avoid leftovers on shared nodes.
+    candidates: list[tuple[int, int]] = []
     for idx in gpus:
         if gpu_is_free(idx):
-            return idx
-    return None
+            try:
+                used = int(
+                    subprocess.run(
+                        [
+                            "nvidia-smi",
+                            "--query-gpu=memory.used",
+                            f"--id={idx}",
+                            "--format=csv,noheader,nounits",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    ).stdout.strip()
+                )
+            except (ValueError, TypeError):
+                continue
+            candidates.append((used, idx))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][1]
 
 
 def mark(job: TrainJob, status: str, gpu: int | None = None) -> None:
