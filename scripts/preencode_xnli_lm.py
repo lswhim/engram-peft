@@ -25,7 +25,7 @@ import numpy as np
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from engram_peft import RQNgramMapping
+from engram_peft.rq_hashing import RQNgramMapping
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,31 +41,82 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def poly_keys(compressed: np.ndarray, order: int, base: int) -> np.ndarray:
-    """Return suffix polynomial keys for every n-gram ending at position t."""
-    batch, length = compressed.shape
-    result = np.zeros((batch, length), dtype=np.int64)
-    if length < order:
-        return result
-    windows = np.lib.stride_tricks.sliding_window_view(
-        compressed, window_shape=order, axis=1
+def collect_misses(
+    texts: list[str],
+    tokenizer: Any,
+    compressor: Any,
+    table_keys: dict[int, np.ndarray],
+    orders: list[int],
+    max_length: int,
+    base: int,
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Return per-order (unique_miss_keys, first_original_window) vectors.
+
+    Vectorized replacement for the old row/col Python loop: every context
+    position in a text batch is expanded to all n-gram windows, matched against
+    the offline table with searchsorted, and only genuinely unseen keys survive.
+    """
+    encoded = tokenizer(
+        texts,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length",
+        return_tensors="np",
     )
-    values = np.zeros(windows.shape[:2], dtype=np.int64)
-    for offset in range(order):
-        values = values * base + windows[..., offset].astype(np.int64)
-    result[:, order - 1 :] = values
+    input_ids = np.asarray(encoded["input_ids"], dtype=np.int64)
+    attention = np.asarray(encoded["attention_mask"], dtype=np.uint8)
+    compressed = np.asarray(compressor.map_ids(input_ids), dtype=np.int64)
+
+    result: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for order in orders:
+        batch, length = compressed.shape
+        if length < order:
+            result[order] = (
+                np.empty(0, dtype=np.int64),
+                np.empty((0, order), dtype=np.int64),
+            )
+            continue
+        windows = np.lib.stride_tricks.sliding_window_view(
+            compressed, window_shape=order, axis=1
+        )  # [batch, length-order+1, order]
+        flat_windows = windows.reshape(-1, order)
+        keys = np.zeros(flat_windows.shape[0], dtype=np.int64)
+        for offset in range(order):
+            keys = keys * base + flat_windows[..., offset].astype(np.int64)
+        # valid context positions: token t has a real next token (attention[t+1])
+        valid = np.zeros((batch, length), dtype=bool)
+        valid[:, order - 1 : -1] = (
+            attention[:, order - 1 : -1].astype(bool)
+            & attention[:, order:].astype(bool)
+        )
+        flat_valid = valid[:, order - 1 :].reshape(-1)
+        keys = keys[flat_valid]
+        flat_windows = flat_windows[flat_valid]
+
+        pos = np.searchsorted(table_keys[order], keys)
+        hit = (pos < len(table_keys[order])) & (
+            table_keys[order][np.clip(pos, 0, len(table_keys[order]) - 1)] == keys
+        )
+        keys = keys[~hit]
+        flat_windows = flat_windows[~hit]
+        if keys.size == 0:
+            result[order] = (
+                np.empty(0, dtype=np.int64),
+                np.empty((0, order), dtype=np.int64),
+            )
+            continue
+
+        # Keep the first window per unique key by sorting on (key, position).
+        order_ids = np.arange(keys.size)
+        sort_idx = np.lexsort((order_ids, keys))
+        sorted_keys = keys[sort_idx]
+        sorted_windows = flat_windows[sort_idx]
+        first_mask = np.ones(keys.size, dtype=bool)
+        first_mask[1:] = sorted_keys[1:] != sorted_keys[:-1]
+        unique_keys = sorted_keys[first_mask]
+        first_windows = sorted_windows[first_mask]
+        result[order] = (unique_keys, first_windows)
     return result
-
-
-def valid_mask(attention: np.ndarray, order: int) -> np.ndarray:
-    mask = np.zeros_like(attention, dtype=bool)
-    if attention.shape[1] <= order:
-        return mask
-    mask[:, order - 1 : -1] = (
-        attention[:, order - 1 : -1].astype(bool)
-        & attention[:, order:].astype(bool)
-    )
-    return mask
 
 
 def iter_xnli_rows(seed: int):
@@ -109,16 +160,6 @@ def main() -> None:
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    from engram_peft.compression import CompressedTokenizer
-
-    compressor = CompressedTokenizer(tokenizer=tokenizer)
-    base = int(compressor.compressed_vocab_size) + 1
-
-    if args.mode == "xnli":
-        rows = iter_xnli_rows(args.seed)
-    else:
-        rows = iter_lm_rows(args.seed, args.lm_rows)
-
     mapping = RQNgramMapping(
         table_dir=args.table_dir,
         cache_dir=args.cache_dir,
@@ -136,55 +177,61 @@ def main() -> None:
         "PRIMARY KEY (n, key))"
     )
 
-    pending_keys: dict[int, list[int]] = {order: [] for order in orders}
-    pending_windows: dict[int, list[np.ndarray]] = {order: [] for order in orders}
-    total = 0
-    for text in rows:
-        ids = tokenizer(
-            text,
-            truncation=True,
-            max_length=args.max_length,
-            return_tensors="np",
-        )
-        input_ids = np.asarray(ids["input_ids"], dtype=np.int64)
-        attention = np.asarray(ids["attention_mask"], dtype=np.uint8)
-        compressed = np.asarray(compressor.map_ids(input_ids), dtype=np.int64)
-        for order in orders:
-            keys = poly_keys(compressed, order, base)
-            valid = valid_mask(attention, order)
-            seen: set[int] = set()
-            for row in range(keys.shape[0]):
-                for col in np.flatnonzero(valid[row]):
-                    key = int(keys[row, col])
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    pos = np.searchsorted(table_keys[order], key)
-                    if pos < len(table_keys[order]) and table_keys[order][pos] == key:
-                        continue  # offline covered
-                    pending_keys[order].append(key)
-                    window = compressed[row, col - order + 1 : col + 1]
-                    pending_windows[order].append(window)
-        total += 1
-        if total % 2000 == 0:
-            print(f"[preencode] rows={total}", flush=True)
+    from engram_peft.compression import CompressedTokenizer
 
-    print(f"[preencode] collecting {len(pending_keys[2]) + len(pending_keys[3])} misses", flush=True)
-    for order in orders:
-        keys = np.asarray(pending_keys[order], dtype=np.int64)
-        if keys.size == 0:
-            continue
-        windows = np.stack(pending_windows[order])
-        codes = mapping._encode_missing(order, keys, windows)
-        conn.executemany(
-            "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
-            [
-                (order, int(key), sqlite3.Binary(code.astype(np.uint16).tobytes()))
-                for key, code in zip(keys, codes, strict=True)
-            ],
+    compressor = CompressedTokenizer(tokenizer=tokenizer)
+    base = int(compressor.compressed_vocab_size) + 1
+
+    if args.mode == "xnli":
+        rows = iter_xnli_rows(args.seed)
+    else:
+        rows = iter_lm_rows(args.seed, args.lm_rows)
+
+    # Batch texts and flush misses every N rows so GPU memory and the SQLite
+    # write set stay bounded while still vectorizing tokenization/quantization.
+    text_batch: list[str] = []
+    rows_seen = 0
+    # Large flush batches amortize the embedder forward and SQLite writes;
+    # 20k rows keeps peak GPU/memory reasonable for XNLI (392k rows).
+    flush_every = 20_000
+
+    def flush() -> None:
+        if not text_batch:
+            return
+        misses = collect_misses(
+            text_batch,
+            tokenizer,
+            compressor,
+            table_keys,
+            orders,
+            args.max_length,
+            base,
         )
-        conn.commit()
-        print(f"[preencode] order={order} wrote={len(codes)}", flush=True)
+        for order in orders:
+            keys, windows = misses[order]
+            if keys.size == 0:
+                continue
+            codes = mapping._encode_missing(order, keys, windows)
+            conn.executemany(
+                "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
+                [
+                    (order, int(key), sqlite3.Binary(code.astype(np.uint16).tobytes()))
+                    for key, code in zip(keys, codes, strict=True)
+                ],
+            )
+            conn.commit()
+            print(
+                f"[preencode] rows={rows_seen} order={order} wrote={len(codes)}",
+                flush=True,
+            )
+
+    for text in rows:
+        text_batch.append(text)
+        rows_seen += 1
+        if rows_seen % flush_every == 0:
+            flush()
+            text_batch.clear()
+    flush()
     print("[preencode] done", flush=True)
 
 
