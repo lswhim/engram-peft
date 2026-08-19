@@ -121,6 +121,10 @@ def xtreme_rows(root: Path, family: str) -> list[str]:
             )
         elif state == "running":
             status = str(payload.get("status", "running"))
+            if status == "loading_data":
+                status = "训练中"
+            elif status == "evaluating":
+                status = "评测中"
             rows.append(
                 f"<tr><th>{html.escape(method)}</th>"
                 f"<td><span class='run'>运行中 · {html.escape(status)}</span></td>"
