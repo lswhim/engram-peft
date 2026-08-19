@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--interval", type=float, default=20.0)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--logdir", type=Path, default=Path("run_logs"))
     return parser.parse_args()
 
 
@@ -43,6 +45,33 @@ def read_json(path: Path) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+_STEP_RE = re.compile(r"(\d+)/(\d+)\s+\[")
+
+
+def tail_text(path: Path, max_bytes: int = 20000) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            return handle.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def last_step_progress(path: Path) -> str | None:
+    matches = _STEP_RE.findall(tail_text(path))
+    if not matches:
+        return None
+    current, total = matches[-1]
+    return f"{current}/{total}"
+
+
+def step_cell(logdir: Path, log_name: str) -> str:
+    progress = last_step_progress(logdir / log_name)
+    return progress or "—"
 
 
 def pct(value: float | None) -> str:
@@ -109,7 +138,7 @@ def language_details(languages: dict[str, Any]) -> str:
     )
 
 
-def xtreme_rows(root: Path, family: str) -> list[str]:
+def xtreme_rows(root: Path, family: str, logdir: Path) -> list[str]:
     rows: list[str] = []
     for method in XTREME_METHODS:
         state, payload = xtreme_payload(root, family, method)
@@ -125,9 +154,12 @@ def xtreme_rows(root: Path, family: str) -> list[str]:
                 status = "训练中"
             elif status == "evaluating":
                 status = "评测中"
+            log_name = f"{family}_{method}.log"
+            step = step_cell(logdir, log_name)
             rows.append(
                 f"<tr><th>{html.escape(method)}</th>"
-                f"<td><span class='run'>运行中 · {html.escape(status)}</span></td>"
+                f"<td><span class='run'>运行中 · {html.escape(status)}</span>"
+                f" <span class='step'>{html.escape(step)}</span></td>"
                 f"<td>—</td></tr>"
             )
         else:
@@ -138,14 +170,16 @@ def xtreme_rows(root: Path, family: str) -> list[str]:
     return rows
 
 
-def lm_rows(root: Path) -> list[str]:
+def lm_rows(root: Path, logdir: Path) -> list[str]:
     rows: list[str] = []
     for method in LM_METHODS:
         payload = read_json(root / "standard_lm" / f"{method}_seed42.json")
         if payload.get("status") != "complete":
+            step = step_cell(logdir, f"lm_{method}_seed42.log")
             rows.append(
                 f"<tr><th>{html.escape(method)}</th>"
-                f"<td><span class='run'>运行中</span></td>"
+                f"<td><span class='run'>运行中</span>"
+                f" <span class='step'>{html.escape(step)}</span></td>"
                 f"<td>—</td><td>—</td><td>—</td></tr>"
             )
             continue
@@ -164,7 +198,7 @@ def lm_rows(root: Path) -> list[str]:
     return rows
 
 
-def render(root: Path, now: str) -> str:
+def render(root: Path, logdir: Path, now: str) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -182,6 +216,7 @@ table{{border-collapse:collapse;width:100%;background:#fffdf7;border:1px solid v
 th,td{{padding:8px 10px;border-bottom:1px solid #e6e0d5;text-align:left;vertical-align:top}}
 thead th{{background:#f7f3ea}}details summary{{cursor:pointer;font-weight:600}}
 .ok{{color:var(--green);font-weight:700}}.run{{color:#8a5a00;font-weight:700}}.queue{{color:var(--muted);font-weight:700}}
+.step{{color:var(--muted);font-variant-numeric:tabular-nums}}
 </style></head><body><main>
 <h1>Semantic-Keyed · Unified Dashboard</h1>
 <div class="muted">更新于 {now}</div>
@@ -198,15 +233,15 @@ thead th{{background:#f7f3ea}}details summary{{cursor:pointer;font-weight:600}}
 <section id="xnli" class="panel">
 <h2>XNLI 跨语言（seed 42，英文 MNLI 训练 → 15 语零样本）</h2>
 <table><thead><tr><th>方法</th><th>状态</th><th>Macro acc / 语言</th></tr></thead>
-<tbody>{''.join(xtreme_rows(root, 'xnli'))}</tbody></table></section>
+<tbody>{''.join(xtreme_rows(root, 'xnli', logdir))}</tbody></table></section>
 <section id="pawsx" class="panel">
 <h2>PAWS-X 跨语言（seed 42，英文训练 → 7 语零样本）</h2>
 <table><thead><tr><th>方法</th><th>状态</th><th>Macro acc / 语言</th></tr></thead>
-<tbody>{''.join(xtreme_rows(root, 'pawsx'))}</tbody></table></section>
+<tbody>{''.join(xtreme_rows(root, 'pawsx', logdir))}</tbody></table></section>
 <section id="lm" class="panel">
 <h2>语言建模（seed 42，FineWeb 400 步训练 → WikiText / LAMBADA）</h2>
 <table><thead><tr><th>方法</th><th>状态</th><th>WikiText PPL</th><th>bits/byte</th><th>LAMBADA acc</th></tr></thead>
-<tbody>{''.join(lm_rows(root))}</tbody></table></section>
+<tbody>{''.join(lm_rows(root, logdir))}</tbody></table></section>
 </main>
 <script>
 document.querySelectorAll('button.tab').forEach(b=>b.onclick=()=>{{
@@ -223,7 +258,7 @@ def main() -> None:
     while True:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         temporary = args.output.with_suffix(".tmp.html")
-        temporary.write_text(render(args.root, now), encoding="utf-8")
+        temporary.write_text(render(args.root, args.logdir, now), encoding="utf-8")
         temporary.replace(args.output)
         if args.once:
             break
