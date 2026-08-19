@@ -194,7 +194,7 @@ def last_step_progress(
     return f"{current}/{total}", eta
 
 
-def log_is_stale(path: Path, max_age: float = 600.0) -> bool:
+def log_is_stale(path: Path, max_age: float = 300.0) -> bool:
     """True when a log exists but has not been written for ``max_age`` seconds."""
     try:
         mtime = path.stat().st_mtime
