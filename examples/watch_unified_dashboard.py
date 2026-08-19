@@ -373,7 +373,12 @@ def lm_rows(root: Path, logdir: Path) -> list[str]:
             log_name = f"lm100m_{method}_seed42.log"
             log_path = logdir / log_name
             step = step_cell(logdir, log_name)
-            if log_is_stale(log_path):
+            if not log_path.exists():
+                rows.append(
+                    f"<tr><th>{html.escape(method)}</th>"
+                    f"<td><span class='queue'>排队中</span><td>—</td><td>—</td><td>—</td></tr>"
+                )
+            elif log_is_stale(log_path):
                 rows.append(
                     f"<tr><th>{html.escape(method)}</th>"
                     f"<td><span class='queue'>已停止</span>"
