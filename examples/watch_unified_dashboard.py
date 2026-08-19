@@ -305,8 +305,6 @@ def wiki_payloads(root: Path, method: str) -> dict[str, dict[str, Any]]:
 
 def wiki_progress(logdir: Path, method: str) -> str:
     log_path = logdir / f"wikibigedit_official_{method}_seed42_resume.log"
-    if not log_path.is_file():
-        log_path = logdir / f"wikibigedit_official_{method}_seed42.log"
     progress = last_step_progress(log_path)
     if progress is None:
         return "—"
