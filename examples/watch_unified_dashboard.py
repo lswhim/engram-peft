@@ -148,6 +148,8 @@ def lm_rows(root: Path) -> list[str]:
         results = payload.get("results", {})
         wikitext = results.get("wikitext", {})
         lambada = results.get("lambada_openai", {})
+        wikitext = {key.split(",")[0]: value for key, value in wikitext.items()}
+        lambada = {key.split(",")[0]: value for key, value in lambada.items()}
         rows.append(
             f"<tr><th>{html.escape(method)}</th>"
             f"<td><span class='ok'>完成</span></td>"
