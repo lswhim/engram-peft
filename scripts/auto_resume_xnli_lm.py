@@ -272,6 +272,21 @@ def launch(job: TrainJob, gpu: int) -> None:
     print(f"[auto-resume] launched {job.name} on gpu {gpu}", flush=True)
 
 
+def launched_worker_alive(job: TrainJob) -> bool:
+    """Return True when a worker for this job is still running."""
+    if job.worker.endswith("run_lm_100m_worker.sh"):
+        needle = f"run_lm_100m_worker.sh {job.mode}"
+    else:
+        needle = f"run_xnli_semantic_keyed_worker.sh {job.mode}"
+    out = subprocess.run(
+        ["pgrep", "-f", needle],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    return bool(out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -330,6 +345,14 @@ def main() -> None:
             for job in jobs:
                 st = read_json(state_for(job.name))
                 if st.get("status") == "launched":
+                    # Clear stale launched markers when the worker exited
+                    # (OOM / readonly-cache crashes) so it can be relaunched.
+                    if not launched_worker_alive(job):
+                        write_json(
+                            state_for(job.name),
+                            {"name": job.name, "status": "queued", "updated_at": now()},
+                        )
+                        print(f"[auto-resume] {job.name} worker died; requeued", flush=True)
                     continue
                 if job.preencode_name and job.preencode_name not in ready_deps:
                     continue
