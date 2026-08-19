@@ -47,7 +47,7 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-_STEP_RE = re.compile(r"(\d+)/(\d+)\s+\[")
+_STEP_RE = re.compile(r"(\d+)/(\d+)\s+\[[0-9:]+<([0-9:]+),")
 
 
 def tail_text(path: Path, max_bytes: int = 20000) -> str:
@@ -61,17 +61,22 @@ def tail_text(path: Path, max_bytes: int = 20000) -> str:
         return ""
 
 
-def last_step_progress(path: Path) -> str | None:
+def last_step_progress(path: Path) -> tuple[str, str | None] | None:
     matches = _STEP_RE.findall(tail_text(path))
     if not matches:
         return None
-    current, total = matches[-1]
-    return f"{current}/{total}"
+    current, total, eta = matches[-1]
+    return f"{current}/{total}", eta
 
 
 def step_cell(logdir: Path, log_name: str) -> str:
     progress = last_step_progress(logdir / log_name)
-    return progress or "—"
+    if progress is None:
+        return "—"
+    step, eta = progress
+    if eta:
+        return f"{step} · ETA {eta}"
+    return step
 
 
 def pct(value: float | None) -> str:
