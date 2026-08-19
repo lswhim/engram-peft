@@ -310,14 +310,6 @@ def main() -> None:
                 st = read_json(state_for(job.name))
                 if st.get("status") == "launched":
                     continue
-                # semantic jobs are the requested priority; only start the
-                # dependency-free arithmetic baseline after those have begun.
-                if job.mode == "arithmetic" and any(
-                    read_json(state_for(other.name)).get("status") != "launched"
-                    for other in jobs
-                    if other is not job and other.mode != "arithmetic"
-                ):
-                    continue
                 if job.preencode_name and job.preencode_name not in ready_deps:
                     continue
                 if job.mode == "semantic_flatten" and not flatten_cache_ready():
