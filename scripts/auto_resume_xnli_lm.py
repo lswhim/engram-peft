@@ -277,7 +277,10 @@ def launched_worker_alive(job: TrainJob) -> bool:
     if job.worker.endswith("run_lm_100m_worker.sh"):
         needle = f"run_lm_100m_worker.sh {job.mode}"
     else:
-        needle = f"run_xnli_semantic_keyed_worker.sh {job.mode}"
+        # The XNLI worker may have been launched manually (directly through
+        # run_xtreme_xnli.py), so detect by the router instead of the wrapper.
+        router = "semantic_keyed" if job.mode == "semantic_keyed" else "flatten"
+        needle = f"run_xtreme_xnli.py .*rq_router {router}"
     out = subprocess.run(
         ["pgrep", "-f", needle],
         capture_output=True,
