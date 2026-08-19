@@ -71,14 +71,14 @@ WIKI_METHOD_LABELS = {
 MACHINE_TASKS = (
     {
         "machine": "1号机 (4×A100)",
-        "gpu": "GPU0",
+        "gpu": "GPU1",
         "label": "XNLI · semantic_keyed",
         "log": "xnli_semantic_keyed.log",
         "expected_total": 12272,
         "complete": "xnli_semantic_keyed/semantic_keyed/rq_semantic_keyed_seed42/metrics.json",
     },
     {
-        "machine": "1号机 (4×A100)",
+        "machine": "3号机 (8×A100)",
         "gpu": "GPU1",
         "label": "XNLI · semantic_flatten",
         "log": "xnli_semantic_flatten.log",
