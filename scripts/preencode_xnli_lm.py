@@ -193,9 +193,11 @@ def main() -> None:
     # write set stay bounded while still vectorizing tokenization/quantization.
     text_batch: list[str] = []
     rows_seen = 0
-    # Large flush batches amortize the embedder forward and SQLite writes;
-    # 20k rows keeps peak GPU/memory reasonable for XNLI (392k rows).
-    flush_every = 20_000
+    # Keep each flush batch small.  The LM path uses max_length=1024, so a
+    # 20k-row flush expands to ~20M windows per n-gram order and the sort /
+    # dedup phase can stall for hours with 100GB RSS.  2k rows keeps that
+    # expansion at ~2M windows while still amortizing embedder / SQLite costs.
+    flush_every = int(os.environ.get("PREENCODE_FLUSH_ROWS", "2000"))
 
     def flush() -> None:
         if not text_batch:
