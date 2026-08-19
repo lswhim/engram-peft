@@ -89,7 +89,12 @@ def running_pids() -> set[int]:
 
 
 def gpu_is_free(index: int) -> bool:
-    """Free means no active compute process on that GPU."""
+    """Free means no visible compute app AND low allocated memory.
+
+    The shared pod's nvidia-smi can list compute processes owned by other
+    namespaces that are invisible under /proc.  Requiring both conditions
+    avoids placing a worker on a card that is actually busy elsewhere.
+    """
     apps = subprocess.run(
         [
             "nvidia-smi",
@@ -104,7 +109,23 @@ def gpu_is_free(index: int) -> bool:
     for line in apps.splitlines():
         if line.strip():
             return False
-    return True
+    try:
+        used = int(
+            subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.used",
+                    f"--id={index}",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+        )
+    except (ValueError, TypeError):
+        return False
+    return used < 4000
 
 
 def process_uses_gpu(pid: int, index: int) -> bool:
