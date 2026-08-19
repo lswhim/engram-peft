@@ -25,7 +25,20 @@ KE_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
 KE_METRICS = ("efficacy", "paraphrase", "specificity", "harmonic_score")
 
 XTREME_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
-LM_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
+LM_METHODS = (
+    "arithmetic",
+    "semantic_flatten",
+    "semantic_keyed",
+    "shuffled_keyed",
+)
+# LM 100M worker writes standard_lm/100m_<method>_seed<seed>.json and logs to
+# run_logs/lm100m_<method>_seed<seed>.log.
+LM_RESULT_NAMES = {
+    "arithmetic": "100m_arithmetic",
+    "semantic_flatten": "100m_semantic_flatten",
+    "semantic_keyed": "100m_semantic_keyed",
+    "shuffled_keyed": "100m_shuffled_keyed",
+}
 
 WIKI_METHODS = (
     "arithmetic",
@@ -316,7 +329,8 @@ def xtreme_rows(root: Path, family: str, logdir: Path) -> list[str]:
 def lm_rows(root: Path, logdir: Path) -> list[str]:
     parsed: dict[str, dict[str, float | None]] = {}
     for method in LM_METHODS:
-        payload = read_json(root / "standard_lm" / f"{method}_seed42.json")
+        result_name = LM_RESULT_NAMES[method]
+        payload = read_json(root / "standard_lm" / f"{result_name}_seed42.json")
         if payload.get("status") != "complete":
             parsed[method] = {}
             continue
@@ -338,7 +352,7 @@ def lm_rows(root: Path, logdir: Path) -> list[str]:
     rows: list[str] = []
     for method in LM_METHODS:
         if not parsed.get(method):
-            step = step_cell(logdir, f"lm_{method}_seed42.log")
+            step = step_cell(logdir, f"lm100m_{method}_seed42.log")
             rows.append(
                 f"<tr><th>{html.escape(method)}</th>"
                 f"<td><span class='run'>运行中</span>"
@@ -586,7 +600,7 @@ details summary{{cursor:pointer;font-weight:600}}details table{{margin-top:6px}}
 <table><thead><tr><th>方法</th><th>状态</th><th>Macro acc <span class="dir">↑</span> / 语言</th></tr></thead>
 <tbody>{''.join(xtreme_rows(root, 'pawsx', logdir))}</tbody></table></div></section>
 <section id="lm" class="panel">
-<h2>语言建模（seed 42，FineWeb 400 步训练 → WikiText / LAMBADA）</h2>
+<h2>语言建模（seed 42，FineWeb 100M tokens → WikiText / LAMBADA）</h2>
 <div class="card table-wrap">
 <table><thead><tr><th>方法</th><th>状态</th><th>WikiText PPL <span class="dir">↓</span></th><th>bits/byte <span class="dir">↓</span></th><th>LAMBADA acc <span class="dir">↑</span></th></tr></thead>
 <tbody>{''.join(lm_rows(root, logdir))}</tbody></table></div></section>

@@ -148,7 +148,12 @@ arithmetic-fixed 的总容量应为 `[2048, 2048]`，而不是 `[8192, 8192]`（
 ### 6.3 受控语言建模（FineWeb -> WikiText / LAMBADA）
 
 - 测“语义地址与语义 key 是否改善 Engram 的本职语言建模任务”。
-- 当前是 400 步 pilot，只证明可训练、不破坏冻结底座；正式主表需要更长步数和 token 切片分析。
+- 口径：FineWeb-Edu sample-10BT 取 100k 条训练序列（`seq=1024`，`batch 4 × grad_accum 32`），
+  `763` 步 ≈ 100M token slots；冻结 Qwen3-1.7B 底座，只训练 memory value，评测 WikiText PPL 与
+  LAMBADA acc。
+- 方法：`arithmetic / semantic_flatten / semantic_keyed / shuffled_keyed`；arithmetic 容量用
+  `[2048,2048]` 与 RQ 每 head 256 对齐。
+- 训练文本先预编码进 RQ cache（warm cache），评测仍走真实动态 OOV 路径。
 
 ### 6.4 WikiBigEdit official（8 timestep lifelong editing）
 
@@ -178,7 +183,7 @@ arithmetic-fixed 的总容量应为 `[2048, 2048]`，而不是 `[8192, 8192]`（
 **尚未完成或尚不能下结论：**
 
 - XNLI 的 semantic_flatten / semantic_keyed 仍在训练；
-- 语言建模是 pilot，且 arithmetic 容量刚修正，需重跑；
+- 语言建模 100M 全量仍在训练（arithmetic 约 390/763，semantic_keyed 受动态 OOV 拖慢、已做预编码）；
 - WikiBigEdit official 正在跑 8 timestep；
 - 全部结果目前主要是 seed 42，未到多 seed 标准。
 
@@ -186,8 +191,8 @@ arithmetic-fixed 的总容量应为 `[2048, 2048]`，而不是 `[8192, 8192]`（
 
 1. 三个核心方法跑满 `42 / 123 / 456` 三个 seed。
 2. XNLI 两个 semantic 方法完成，补齐跨语言表。
-3. 语言建模升级：拉长步数、arithmetic 用 `[2048,2048]`、跑 token 切片（exact_seen / semantic_neighbor /
-   long_tail / covered_no_neighbor / address_oov）。
+3. 语言建模：跑完 100M 全量的四个方法，再做 token 切片（exact_seen / semantic_neighbor /
+   long_tail / covered_no_neighbor / address_oov）机制分析。
 4. WikiBigEdit official 完成 8 timestep，报告五轴 + retention/forgetting。
 5. 加入 Shuffled-keyed 因果对照，验证 keyed 的收益确实来自“地址语义”而非一般结构变化。
 6. 报告动态 OOV 的 offline-hit / dynamic-OOV 切片，证明语义泛化在未见 n-gram 上仍存在。
