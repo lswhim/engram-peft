@@ -285,11 +285,11 @@ def main() -> None:
                  "semantic_keyed", "preencode_xnli_keyed"),
         TrainJob("xnli_semantic_flatten", "scripts/run_xnli_semantic_keyed_worker.sh",
                  "semantic_flatten", "preencode_xnli_keyed"),
-        TrainJob("lm_arithmetic", "scripts/run_lm_100m_worker.sh", "arithmetic"),
         TrainJob("lm_semantic_keyed", "scripts/run_lm_100m_worker.sh",
                  "semantic_keyed", "preencode_lm_keyed"),
         TrainJob("lm_semantic_flatten", "scripts/run_lm_100m_worker.sh",
                  "semantic_flatten", "preencode_lm_keyed"),
+        TrainJob("lm_arithmetic", "scripts/run_lm_100m_worker.sh", "arithmetic"),
     ]
     by_name = {job.name: job for job in jobs}
 
