@@ -27,6 +27,30 @@ KE_METRICS = ("efficacy", "paraphrase", "specificity", "harmonic_score")
 XTREME_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
 LM_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
 
+WIKI_METHODS = (
+    "arithmetic",
+    "semantic_flatten",
+    "semantic_keyed",
+    "shuffled_flatten",
+    "shuffled_semantic_keyed",
+)
+WIKI_AXES = ("efficacy", "generalization", "personas", "multi_hop", "locality")
+WIKI_AXIS_LABELS = {
+    "efficacy": "Update",
+    "generalization": "Rephrase",
+    "personas": "Personas",
+    "multi_hop": "Mhop",
+    "locality": "Locality",
+}
+WIKI_COUNTS = (26922, 29835, 54504, 43443, 121116, 101728, 69403, 55431)
+WIKI_METHOD_LABELS = {
+    "arithmetic": "Arithmetic",
+    "semantic_flatten": "Semantic-flat",
+    "semantic_keyed": "Semantic-keyed",
+    "shuffled_flatten": "Shuffled-flat",
+    "shuffled_semantic_keyed": "Shuffled-keyed",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -252,52 +276,200 @@ def lm_rows(root: Path, logdir: Path) -> list[str]:
     return rows
 
 
+def wiki_cumulative_counts() -> list[int]:
+    """Cumulative edit counts at the end of each of the 8 official timesteps."""
+    cumulative: list[int] = []
+    total = 0
+    for count in WIKI_COUNTS:
+        total += count
+        cumulative.append(total)
+    return cumulative
+
+
+def wiki_metric_mean(payload: dict[str, Any], axis: str) -> float | None:
+    metric = payload.get("metrics", {}).get(f"axis/{axis}")
+    if isinstance(metric, dict) and isinstance(metric.get("mean"), (int, float)):
+        return float(metric["mean"])
+    return None
+
+
+def wiki_payloads(root: Path, method: str) -> dict[str, dict[str, Any]]:
+    """Return a map of timestep label -> result payload for one method."""
+    base = root / "semantic_memory" / "wikibigedit_official" / method / "seed_42"
+    out: dict[str, dict[str, Any]] = {}
+    for index, cumulative in enumerate(wiki_cumulative_counts()):
+        payload = read_json(base / f"t{index}_at_{cumulative}.json")
+        out[f"T{index}"] = payload
+    return out
+
+
+def wiki_progress(logdir: Path, method: str) -> str:
+    log_path = logdir / f"wikibigedit_official_{method}_seed42_resume.log"
+    if not log_path.is_file():
+        log_path = logdir / f"wikibigedit_official_{method}_seed42.log"
+    progress = last_step_progress(log_path)
+    if progress is None:
+        return "—"
+    step, eta = progress
+    if eta:
+        return f"{step} · ETA {eta}"
+    return step
+
+
+def wiki_table_rows(root: Path, logdir: Path) -> list[str]:
+    timesteps = [f"T{i}" for i in range(len(WIKI_COUNTS))]
+    rows: list[str] = []
+    for method in WIKI_METHODS:
+        payloads = wiki_payloads(root, method)
+        step = wiki_progress(logdir, method)
+        live = step != "—"
+        cells: list[str] = []
+        for timestep in timesteps:
+            payload = payloads.get(timestep, {})
+            axis_means = {
+                axis: wiki_metric_mean(payload, axis) for axis in WIKI_AXES
+            }
+            if payload.get("status") == "complete" and any(
+                value is not None for value in axis_means.values()
+            ):
+                parts = " ".join(
+                    f"<span>{html.escape(WIKI_AXIS_LABELS[a])} "
+                    f"<b>{pct(axis_means[a])}</b></span>"
+                    for a in WIKI_AXES
+                )
+                cells.append(
+                    f"<td><div class='wiki-axes'>{parts}</div></td>"
+                )
+            elif payload.get("status") == "evaluating":
+                cells.append(
+                    f"<td><span class='run'>评测中</span></td>"
+                )
+            elif live:
+                cells.append(
+                    f"<td><span class='run'>训练中</span></td>"
+                )
+            else:
+                cells.append(
+                    f"<td><span class='queue'>排队中</span></td>"
+                )
+        rows.append(
+            f"<tr><th>{html.escape(WIKI_METHOD_LABELS[method])}</th>"
+            f"<td><span class='step'>{html.escape(step)}</span></td>"
+            f"{''.join(cells)}</tr>"
+        )
+    return rows
+
+
+def wiki_axis_table_rows(root: Path) -> list[str]:
+    """One row per method with each of the 5 axes as its own column (final T7)."""
+    rows: list[str] = []
+    final = f"T{len(WIKI_COUNTS) - 1}"
+    winners: dict[str, str | None] = {}
+    values: dict[str, dict[str, float | None]] = {}
+    for method in WIKI_METHODS:
+        payload = wiki_payloads(root, method).get(final, {})
+        values[method] = {
+            axis: wiki_metric_mean(payload, axis) for axis in WIKI_AXES
+        }
+    for axis in WIKI_AXES:
+        winners[axis] = best_in(
+            {m: values[m].get(axis) for m in WIKI_METHODS}, higher=True
+        )
+    for method in WIKI_METHODS:
+        cells = "".join(
+            f"<td class='{'best' if winners[axis] == method else ''}'>"
+            f"{pct(values[method].get(axis))}</td>"
+            for axis in WIKI_AXES
+        )
+        rows.append(
+            f"<tr><th>{html.escape(WIKI_METHOD_LABELS[method])}</th>{cells}</tr>"
+        )
+    return rows
+
+
 def render(root: Path, logdir: Path, now: str) -> str:
+    timestep_heads = "".join(
+        f"<th>T{i}<span class='sub'>{(WIKI_COUNTS[i] if i == 0 else sum(WIKI_COUNTS[:i+1])):,}</span></th>"
+        for i in range(len(WIKI_COUNTS))
+    )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Semantic-Keyed · Unified Dashboard</title>
 <style>
-:root{{--bg:#f4f1e9;--ink:#17201d;--muted:#68736d;--line:#d8d2c5;--green:#176b4d}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,"PingFang SC",sans-serif}}
-main{{max-width:1100px;margin:auto;padding:28px 20px 80px}}h1{{font-size:28px;margin:4px 0 8px}}
-h2{{font-size:18px;margin:18px 0 8px}}.muted{{color:var(--muted)}}
-.tabs{{display:flex;gap:6px;margin:16px 0;flex-wrap:wrap}}
-button.tab{{border:1px solid var(--line);background:#fffdf7;padding:8px 14px;border-radius:999px;cursor:pointer;font-weight:700}}
+:root{{--bg:#f4f6f9;--surface:#ffffff;--ink:#17201d;--muted:#6b7280;--line:#e5e7eb;--green:#176b4d;--amber:#b45309;--blue:#245ca4;--accent:#0f766e}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}}
+main{{max-width:1280px;margin:auto;padding:36px 24px 96px}}
+.masthead{{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;border-bottom:2px solid var(--ink);padding-bottom:18px}}
+.masthead h1{{font-size:30px;margin:0;letter-spacing:-.01em;font-weight:800}}
+.masthead .meta{{color:var(--muted);font-size:12px;text-align:right}}
+.tabs{{display:flex;gap:8px;margin:22px 0 24px;flex-wrap:wrap}}
+button.tab{{appearance:none;border:1px solid var(--line);background:var(--surface);padding:9px 16px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;color:var(--ink);transition:.15s}}
+button.tab:hover{{border-color:var(--accent);color:var(--accent)}}
 button.tab.active{{background:var(--ink);color:#fff;border-color:var(--ink)}}
 .panel{{display:none}}.panel.active{{display:block}}
-table{{border-collapse:collapse;width:100%;background:#fffdf7;border:1px solid var(--line)}}
-th,td{{padding:8px 10px;border-bottom:1px solid #e6e0d5;text-align:left;vertical-align:top}}
-thead th{{background:#f7f3ea}}details summary{{cursor:pointer;font-weight:600}}
-.ok{{color:var(--green);font-weight:700}}.run{{color:#8a5a00;font-weight:700}}.queue{{color:var(--muted);font-weight:700}}
-.step{{color:var(--muted);font-variant-numeric:tabular-nums}}
+.panel h2{{font-size:18px;margin:0 0 14px;font-weight:700}}
+.card{{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:auto;box-shadow:0 1px 2px rgba(16,24,40,.04)}}
+.table-wrap{{overflow-x:auto}}
+table{{border-collapse:collapse;width:100%;background:var(--surface)}}
+th,td{{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}}
+thead th{{background:#f9fafb;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.03em;font-weight:600}}
+tbody th{{font-weight:600;color:var(--ink)}}
+tbody tr:last-child th,tbody tr:last-child td{{border-bottom:none}}
+.metric-num{{font-variant-numeric:tabular-nums;font-weight:600}}
+.sub{{display:block;font-size:10px;color:var(--muted);font-weight:400}}
+.tag{{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600}}
+.ok{{background:#ecfdf3;color:var(--green)}}
+.run{{background:#fff7ed;color:var(--amber)}}
+.queue{{background:#eef2f7;color:var(--muted)}}
+.step{{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}}
 .best{{font-weight:800;color:var(--green);background:#f2f7f3}}
-.dir{{font-weight:500;color:var(--muted)}}
+.dir{{font-weight:600;color:var(--muted);font-size:11px}}
+.wiki-axes{{display:grid;grid-template-columns:repeat(5,auto);gap:6px 12px;min-width:360px}}
+.wiki-axes span{{display:inline-flex;gap:5px;align-items:center;font-size:12px}}
+.wiki-axes b{{font-variant-numeric:tabular-nums;font-weight:700}}
+details summary{{cursor:pointer;font-weight:600}}details table{{margin-top:6px}}
+@media(max-width:760px){{.masthead{{flex-direction:column;align-items:flex-start}}.masthead .meta{{text-align:left}}.wiki-axes{{grid-template-columns:repeat(3,auto)}}}}
 </style></head><body><main>
-<h1>Semantic-Keyed · Unified Dashboard</h1>
-<div class="muted">更新于 {now}</div>
+<div class="masthead"><h1>Semantic-Keyed · Unified Dashboard</h1><div class="meta">更新于 {now}<br>Qwen3-1.7B-Base · seed 42</div></div>
 <nav class="tabs">
 <button class="tab active" data-tab="ke">知识编辑</button>
 <button class="tab" data-tab="xnli">XNLI</button>
 <button class="tab" data-tab="pawsx">PAWS-X</button>
 <button class="tab" data-tab="lm">语言建模</button>
+<button class="tab" data-tab="wiki">WikiBigEdit</button>
 </nav>
 <section id="ke" class="panel active">
 <h2>知识编辑（seed 42）</h2>
+<div class="card table-wrap">
 <table><thead><tr><th>数据集</th><th>方法</th><th>Efficacy <span class="dir">↑</span></th><th>Paraphrase <span class="dir">↑</span></th><th>Specificity <span class="dir">↑</span></th><th>Harmonic <span class="dir">↑</span></th></tr></thead>
-<tbody>{''.join(ke_rows(root))}</tbody></table></section>
+<tbody>{''.join(ke_rows(root))}</tbody></table></div></section>
 <section id="xnli" class="panel">
 <h2>XNLI 跨语言（seed 42，英文 MNLI 训练 → 15 语零样本）</h2>
+<div class="card table-wrap">
 <table><thead><tr><th>方法</th><th>状态</th><th>Macro acc <span class="dir">↑</span> / 语言</th></tr></thead>
-<tbody>{''.join(xtreme_rows(root, 'xnli', logdir))}</tbody></table></section>
+<tbody>{''.join(xtreme_rows(root, 'xnli', logdir))}</tbody></table></div></section>
 <section id="pawsx" class="panel">
 <h2>PAWS-X 跨语言（seed 42，英文训练 → 7 语零样本）</h2>
+<div class="card table-wrap">
 <table><thead><tr><th>方法</th><th>状态</th><th>Macro acc <span class="dir">↑</span> / 语言</th></tr></thead>
-<tbody>{''.join(xtreme_rows(root, 'pawsx', logdir))}</tbody></table></section>
+<tbody>{''.join(xtreme_rows(root, 'pawsx', logdir))}</tbody></table></div></section>
 <section id="lm" class="panel">
 <h2>语言建模（seed 42，FineWeb 400 步训练 → WikiText / LAMBADA）</h2>
+<div class="card table-wrap">
 <table><thead><tr><th>方法</th><th>状态</th><th>WikiText PPL <span class="dir">↓</span></th><th>bits/byte <span class="dir">↓</span></th><th>LAMBADA acc <span class="dir">↑</span></th></tr></thead>
-<tbody>{''.join(lm_rows(root, logdir))}</tbody></table></section>
+<tbody>{''.join(lm_rows(root, logdir))}</tbody></table></div></section>
+<section id="wiki" class="panel">
+<h2>WikiBigEdit · 官方 8 timestep（seed 42）</h2>
+<div class="card table-wrap">
+<table><thead><tr><th>方法</th><th>当前进度</th>{timestep_heads}</tr></thead>
+<tbody>{''.join(wiki_table_rows(root, logdir))}</tbody></table>
+</div>
+<h2 style="margin-top:22px">最终 T7 · 五轴（%）</h2>
+<div class="card table-wrap">
+<table><thead><tr><th>方法</th><th>Update <span class="dir">↑</span></th><th>Rephrase <span class="dir">↑</span></th><th>Personas <span class="dir">↑</span></th><th>Mhop <span class="dir">↑</span></th><th>Locality <span class="dir">↑</span></th></tr></thead>
+<tbody>{''.join(wiki_axis_table_rows(root))}</tbody></table>
+</div></section>
 </main>
 <script>
 document.querySelectorAll('button.tab').forEach(b=>b.onclick=()=>{{
