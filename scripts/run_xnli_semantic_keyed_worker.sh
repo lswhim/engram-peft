@@ -38,7 +38,7 @@ esac
 LOG="run_logs/xnli_${MODE}.log"
 "$PY" -u examples/run_xtreme_xnli.py \
   --method "$METHOD" --model "$MODEL" \
-  --rq_table_dir "$TABLE" --rq_cache_dir "$TABLE/xnli_cache_seed42" \
+  --rq_table_dir "$TABLE" --rq_cache_dir "$TABLE/xnli_cache_${MODE}_seed42" \
   --rq_router "$ROUTER" \
   --output_dir "outputs/xnli_semantic_keyed/${MODE}" \
   --epochs 1 --batch_size 4 --grad_accum 8 --eval_batch_size 8 \

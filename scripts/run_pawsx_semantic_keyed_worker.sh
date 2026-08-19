@@ -38,7 +38,7 @@ esac
 LOG="run_logs/pawsx_${MODE}.log"
 "$PY" -u examples/run_xtreme_pawsx.py \
   --method "$METHOD" --model "$MODEL" \
-  --rq_table_dir "$TABLE" --rq_cache_dir "$TABLE/pawsx_cache_seed42" \
+  --rq_table_dir "$TABLE" --rq_cache_dir "$TABLE/pawsx_cache_${MODE}_seed42" \
   --rq_router "$ROUTER" \
   --output_dir "outputs/pawsx_semantic_keyed/${MODE}" \
   --epochs 1 --batch_size 4 --grad_accum 8 --eval_batch_size 8 \

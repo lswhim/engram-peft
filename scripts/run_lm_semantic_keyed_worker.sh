@@ -20,10 +20,10 @@ mkdir -p run_logs outputs/standard_lm
 COMMON="n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[11,21]"
 case "$MODE" in
   semantic_keyed)
-    SPEC="engram:hash_backend=rq,rq_table_dir=${SEM_TABLE},rq_cache_dir=${SEM_TABLE}/lm_cache_seed${SEED},${COMMON},memory_fusion=head_factorized,head_router_selection=semantic_keyed"
+    SPEC="engram:hash_backend=rq,rq_table_dir=${SEM_TABLE},rq_cache_dir=${SEM_TABLE}/lm_cache_${MODE}_seed${SEED},${COMMON},memory_fusion=head_factorized,head_router_selection=semantic_keyed"
     ;;
   semantic_flatten)
-    SPEC="engram:hash_backend=rq,rq_table_dir=${SEM_TABLE},rq_cache_dir=${SEM_TABLE}/lm_cache_seed${SEED},${COMMON},memory_fusion=flatten"
+    SPEC="engram:hash_backend=rq,rq_table_dir=${SEM_TABLE},rq_cache_dir=${SEM_TABLE}/lm_cache_${MODE}_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
   arithmetic)
     SPEC="engram:hash_backend=arithmetic_fixed,engram_vocab_size_per_ngram=[8192,8192],${COMMON},memory_fusion=flatten"
