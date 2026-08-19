@@ -90,6 +90,20 @@ def fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:.3f}"
 
 
+def best_in(values: dict[Any, float], *, higher: bool) -> Any | None:
+    """Return the key whose value is optimal in a non-empty numeric dict."""
+    numeric = {k: float(v) for k, v in values.items() if isinstance(v, (int, float))}
+    if not numeric:
+        return None
+    return min(numeric, key=numeric.get) if not higher else max(numeric, key=numeric.get)
+
+
+def cell(value: float | None, best: bool) -> str:
+    """Render a metric cell, bolding the column's optimum."""
+    text = pct(value)
+    return f"<td class='best'>{text}</td>" if best else f"<td>{text}</td>"
+
+
 def xtreme_run_name(method: str) -> str:
     """Map a dashboard method label to the on-disk run directory name."""
     if method == "arithmetic":
@@ -114,6 +128,18 @@ def xtreme_payload(root: Path, family: str, method: str) -> tuple[str, dict[str,
 def ke_rows(root: Path) -> list[str]:
     rows: list[str] = []
     for dataset in KE_DATASETS:
+        by_metric = {
+            metric: {
+                method: read_json(
+                    root / "ke_semantic_keyed" / f"{dataset}_{method}_seed42.json"
+                ).get("metrics", {}).get(metric)
+                for method in KE_METHODS
+            }
+            for metric in KE_METRICS
+        }
+        winners = {
+            metric: best_in(by_metric[metric], higher=True) for metric in KE_METRICS
+        }
         for method in KE_METHODS:
             payload = read_json(
                 root / "ke_semantic_keyed" / f"{dataset}_{method}_seed42.json"
@@ -122,7 +148,7 @@ def ke_rows(root: Path) -> list[str]:
                 continue
             metrics = payload.get("metrics", {})
             cells = "".join(
-                f"<td>{pct(metrics.get(m))}</td>" for m in KE_METRICS
+                cell(metrics.get(m), winners[m] == method) for m in KE_METRICS
             )
             rows.append(
                 f"<tr><th>{html.escape(dataset)}</th>"
@@ -179,10 +205,30 @@ def xtreme_rows(root: Path, family: str, logdir: Path) -> list[str]:
 
 
 def lm_rows(root: Path, logdir: Path) -> list[str]:
-    rows: list[str] = []
+    parsed: dict[str, dict[str, float | None]] = {}
     for method in LM_METHODS:
         payload = read_json(root / "standard_lm" / f"{method}_seed42.json")
         if payload.get("status") != "complete":
+            parsed[method] = {}
+            continue
+        results = payload.get("results", {})
+        wikitext = {k.split(",")[0]: v for k, v in results.get("wikitext", {}).items()}
+        lambada = {k.split(",")[0]: v for k, v in results.get("lambada_openai", {}).items()}
+        parsed[method] = {
+            "ppl": wikitext.get("word_perplexity"),
+            "bpb": wikitext.get("bits_per_byte"),
+            "acc": lambada.get("acc"),
+        }
+
+    winners = {
+        "ppl": best_in({m: parsed[m].get("ppl") for m in LM_METHODS}, higher=False),
+        "bpb": best_in({m: parsed[m].get("bpb") for m in LM_METHODS}, higher=False),
+        "acc": best_in({m: parsed[m].get("acc") for m in LM_METHODS}, higher=True),
+    }
+
+    rows: list[str] = []
+    for method in LM_METHODS:
+        if not parsed.get(method):
             step = step_cell(logdir, f"lm_{method}_seed42.log")
             rows.append(
                 f"<tr><th>{html.escape(method)}</th>"
@@ -191,17 +237,17 @@ def lm_rows(root: Path, logdir: Path) -> list[str]:
                 f"<td>—</td><td>—</td><td>—</td></tr>"
             )
             continue
-        results = payload.get("results", {})
-        wikitext = results.get("wikitext", {})
-        lambada = results.get("lambada_openai", {})
-        wikitext = {key.split(",")[0]: value for key, value in wikitext.items()}
-        lambada = {key.split(",")[0]: value for key, value in lambada.items()}
+        values = parsed[method]
+        cls = lambda key: "best" if winners[key] == method else ""
         rows.append(
             f"<tr><th>{html.escape(method)}</th>"
             f"<td><span class='ok'>完成</span></td>"
-            f"<td>{fmt(wikitext.get('word_perplexity'))}</td>"
-            f"<td>{fmt(wikitext.get('bits_per_byte'))}</td>"
-            f"<td>{pct(lambada.get('acc'))}</td></tr>"
+            f"<td class='{cls('ppl')}'>"
+            f"{fmt(values.get('ppl'))}</td>"
+            f"<td class='{cls('bpb')}'>"
+            f"{fmt(values.get('bpb'))}</td>"
+            f"<td class='{cls('acc')}'>"
+            f"{pct(values.get('acc'))}</td></tr>"
         )
     return rows
 
@@ -225,6 +271,8 @@ th,td{{padding:8px 10px;border-bottom:1px solid #e6e0d5;text-align:left;vertical
 thead th{{background:#f7f3ea}}details summary{{cursor:pointer;font-weight:600}}
 .ok{{color:var(--green);font-weight:700}}.run{{color:#8a5a00;font-weight:700}}.queue{{color:var(--muted);font-weight:700}}
 .step{{color:var(--muted);font-variant-numeric:tabular-nums}}
+.best{{font-weight:800;color:var(--green);background:#f2f7f3}}
+.dir{{font-weight:500;color:var(--muted)}}
 </style></head><body><main>
 <h1>Semantic-Keyed · Unified Dashboard</h1>
 <div class="muted">更新于 {now}</div>
@@ -236,19 +284,19 @@ thead th{{background:#f7f3ea}}details summary{{cursor:pointer;font-weight:600}}
 </nav>
 <section id="ke" class="panel active">
 <h2>知识编辑（seed 42）</h2>
-<table><thead><tr><th>数据集</th><th>方法</th><th>Efficacy</th><th>Paraphrase</th><th>Specificity</th><th>Harmonic</th></tr></thead>
+<table><thead><tr><th>数据集</th><th>方法</th><th>Efficacy <span class="dir">↑</span></th><th>Paraphrase <span class="dir">↑</span></th><th>Specificity <span class="dir">↑</span></th><th>Harmonic <span class="dir">↑</span></th></tr></thead>
 <tbody>{''.join(ke_rows(root))}</tbody></table></section>
 <section id="xnli" class="panel">
 <h2>XNLI 跨语言（seed 42，英文 MNLI 训练 → 15 语零样本）</h2>
-<table><thead><tr><th>方法</th><th>状态</th><th>Macro acc / 语言</th></tr></thead>
+<table><thead><tr><th>方法</th><th>状态</th><th>Macro acc <span class="dir">↑</span> / 语言</th></tr></thead>
 <tbody>{''.join(xtreme_rows(root, 'xnli', logdir))}</tbody></table></section>
 <section id="pawsx" class="panel">
 <h2>PAWS-X 跨语言（seed 42，英文训练 → 7 语零样本）</h2>
-<table><thead><tr><th>方法</th><th>状态</th><th>Macro acc / 语言</th></tr></thead>
+<table><thead><tr><th>方法</th><th>状态</th><th>Macro acc <span class="dir">↑</span> / 语言</th></tr></thead>
 <tbody>{''.join(xtreme_rows(root, 'pawsx', logdir))}</tbody></table></section>
 <section id="lm" class="panel">
 <h2>语言建模（seed 42，FineWeb 400 步训练 → WikiText / LAMBADA）</h2>
-<table><thead><tr><th>方法</th><th>状态</th><th>WikiText PPL</th><th>bits/byte</th><th>LAMBADA acc</th></tr></thead>
+<table><thead><tr><th>方法</th><th>状态</th><th>WikiText PPL <span class="dir">↓</span></th><th>bits/byte <span class="dir">↓</span></th><th>LAMBADA acc <span class="dir">↑</span></th></tr></thead>
 <tbody>{''.join(lm_rows(root, logdir))}</tbody></table></section>
 </main>
 <script>
