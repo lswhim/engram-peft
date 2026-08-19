@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""Unified tabbed dashboard for all Semantic-Keyed benchmark families."""
+"""Unified tabbed dashboard for all Semantic-Keyed benchmark families.
+
+Keeps one HTML file fresh as workers drop JSON results on the shared CFS tree.
+It never invents numbers: a tab cell is only filled from a result file whose
+``status == "complete"``.
+"""
 
 from __future__ import annotations
 
@@ -16,15 +21,12 @@ KE_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
 KE_METRICS = ("efficacy", "paraphrase", "specificity", "harmonic_score")
 
 XTREME_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
+LM_METHODS = ("arithmetic", "semantic_flatten", "semantic_keyed")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("outputs"),
-    )
+    parser.add_argument("--root", type=Path, default=Path("outputs"))
     parser.add_argument(
         "--output",
         type=Path,
@@ -47,6 +49,31 @@ def pct(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:.2f}"
 
 
+def fmt(value: float | None) -> str:
+    return "—" if value is None else f"{value:.3f}"
+
+
+def xtreme_run_name(method: str) -> str:
+    """Map a dashboard method label to the on-disk run directory name."""
+    if method == "arithmetic":
+        return "arithmetic_matched_seed42"
+    if method == "semantic_flatten":
+        return "rq_flatten_seed42"
+    return f"rq_{method}_seed42"
+
+
+def xtreme_payload(root: Path, family: str, method: str) -> tuple[str, dict[str, Any]]:
+    """Return (state, payload) where state is complete|running|queued."""
+    run_name = xtreme_run_name(method)
+    path = root / f"{family}_semantic_keyed" / method / run_name / "metrics.json"
+    payload = read_json(path)
+    if not payload:
+        return "queued", {}
+    if payload.get("status") == "complete":
+        return "complete", payload
+    return "running", payload
+
+
 def ke_rows(root: Path) -> list[str]:
     rows: list[str] = []
     for dataset in KE_DATASETS:
@@ -61,57 +88,72 @@ def ke_rows(root: Path) -> list[str]:
                 f"<td>{pct(metrics.get(m))}</td>" for m in KE_METRICS
             )
             rows.append(
-                f"<tr><th>{html.escape(dataset)}</th><th>{html.escape(method)}</th>{cells}</tr>"
+                f"<tr><th>{html.escape(dataset)}</th>"
+                f"<th>{html.escape(method)}</th>{cells}</tr>"
             )
     return rows
 
 
-def xnli_rows(root: Path) -> list[str]:
+def language_details(languages: dict[str, Any]) -> str:
+    rows = "".join(
+        f"<tr><td>{html.escape(str(lang))}</td><td>{pct(float(v))}</td></tr>"
+        for lang, v in languages.items()
+        if lang != "macro"
+    )
+    macro = languages.get("macro")
+    summary = f"{pct(macro)} / {len([k for k in languages if k != 'macro'])} langs"
+    return (
+        f"<details><summary>{summary}</summary><table>"
+        f"<thead><tr><th>语言</th><th>acc</th></tr></thead><tbody>{rows}</tbody>"
+        f"</table></details>"
+    )
+
+
+def xtreme_rows(root: Path, family: str) -> list[str]:
     rows: list[str] = []
     for method in XTREME_METHODS:
-        payload = read_json(
-            root / "xnli_semantic_keyed" / method / f"rq_{method}_seed42" / "metrics.json"
-        ) if method != "arithmetic" else read_json(
-            root / "xnli_semantic_keyed" / method / "arithmetic_matched_seed42" / "metrics.json"
-        )
+        state, payload = xtreme_payload(root, family, method)
+        if state == "complete":
+            detail = language_details(payload.get("languages", {}))
+            rows.append(
+                f"<tr><th>{html.escape(method)}</th>"
+                f"<td><span class='ok'>完成</span></td><td>{detail}</td></tr>"
+            )
+        elif state == "running":
+            status = str(payload.get("status", "running"))
+            rows.append(
+                f"<tr><th>{html.escape(method)}</th>"
+                f"<td><span class='run'>运行中 · {html.escape(status)}</span></td>"
+                f"<td>—</td></tr>"
+            )
+        else:
+            rows.append(
+                f"<tr><th>{html.escape(method)}</th>"
+                f"<td><span class='queue'>排队中</span></td><td>—</td></tr>"
+            )
+    return rows
+
+
+def lm_rows(root: Path) -> list[str]:
+    rows: list[str] = []
+    for method in LM_METHODS:
+        payload = read_json(root / "standard_lm" / f"{method}_seed42.json")
         if payload.get("status") != "complete":
             rows.append(
-                f"<tr><th>{method}</th><td>running</td></tr>"
+                f"<tr><th>{html.escape(method)}</th>"
+                f"<td><span class='run'>运行中</span></td>"
+                f"<td>—</td><td>—</td><td>—</td></tr>"
             )
             continue
-        languages = payload.get("languages", {})
-        macro = (
-            sum(float(v) for v in languages.values()) / len(languages)
-            if languages
-            else None
-        )
+        results = payload.get("results", {})
+        wikitext = results.get("wikitext", {})
+        lambada = results.get("lambada_openai", {})
         rows.append(
             f"<tr><th>{html.escape(method)}</th>"
-            f"<td>{pct(macro)}</td><td>{len(languages)} langs</td></tr>"
-        )
-    return rows
-
-
-def pawsx_rows(root: Path) -> list[str]:
-    rows: list[str] = []
-    for method in XTREME_METHODS:
-        payload = read_json(
-            root / "pawsx_semantic_keyed" / method / f"rq_{method}_seed42" / "metrics.json"
-        ) if method != "arithmetic" else read_json(
-            root / "pawsx_semantic_keyed" / method / "arithmetic_matched_seed42" / "metrics.json"
-        )
-        if payload.get("status") != "complete":
-            rows.append(f"<tr><th>{method}</th><td>running</td></tr>")
-            continue
-        languages = payload.get("languages", {})
-        macro = (
-            sum(float(v) for v in languages.values()) / len(languages)
-            if languages
-            else None
-        )
-        rows.append(
-            f"<tr><th>{html.escape(method)}</th>"
-            f"<td>{pct(macro)}</td><td>{len(languages)} langs</td></tr>"
+            f"<td><span class='ok'>完成</span></td>"
+            f"<td>{fmt(wikitext.get('word_perplexity'))}</td>"
+            f"<td>{fmt(wikitext.get('bits_per_byte'))}</td>"
+            f"<td>{pct(lambada.get('acc'))}</td></tr>"
         )
     return rows
 
@@ -125,11 +167,15 @@ def render(root: Path, now: str) -> str:
 :root{{--bg:#f4f1e9;--ink:#17201d;--muted:#68736d;--line:#d8d2c5;--green:#176b4d}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,"PingFang SC",sans-serif}}
 main{{max-width:1100px;margin:auto;padding:28px 20px 80px}}h1{{font-size:28px;margin:4px 0 8px}}
-.muted{{color:var(--muted)}}.tabs{{display:flex;gap:6px;margin:16px 0;flex-wrap:wrap}}
+h2{{font-size:18px;margin:18px 0 8px}}.muted{{color:var(--muted)}}
+.tabs{{display:flex;gap:6px;margin:16px 0;flex-wrap:wrap}}
 button.tab{{border:1px solid var(--line);background:#fffdf7;padding:8px 14px;border-radius:999px;cursor:pointer;font-weight:700}}
 button.tab.active{{background:var(--ink);color:#fff;border-color:var(--ink)}}
-.panel{{display:none}}.panel.active{{display:block}}table{{border-collapse:collapse;width:100%;background:#fffdf7;border:1px solid var(--line)}}
-th,td{{padding:8px 10px;border-bottom:1px solid #e6e0d5;text-align:left}}thead th{{background:#f7f3ea}}
+.panel{{display:none}}.panel.active{{display:block}}
+table{{border-collapse:collapse;width:100%;background:#fffdf7;border:1px solid var(--line)}}
+th,td{{padding:8px 10px;border-bottom:1px solid #e6e0d5;text-align:left;vertical-align:top}}
+thead th{{background:#f7f3ea}}details summary{{cursor:pointer;font-weight:600}}
+.ok{{color:var(--green);font-weight:700}}.run{{color:#8a5a00;font-weight:700}}.queue{{color:var(--muted);font-weight:700}}
 </style></head><body><main>
 <h1>Semantic-Keyed · Unified Dashboard</h1>
 <div class="muted">更新于 {now}</div>
@@ -144,14 +190,17 @@ th,td{{padding:8px 10px;border-bottom:1px solid #e6e0d5;text-align:left}}thead t
 <table><thead><tr><th>数据集</th><th>方法</th><th>Efficacy</th><th>Paraphrase</th><th>Specificity</th><th>Harmonic</th></tr></thead>
 <tbody>{''.join(ke_rows(root))}</tbody></table></section>
 <section id="xnli" class="panel">
-<h2>XNLI 跨语言（seed 42）</h2>
-<table><thead><tr><th>方法</th><th>Macro acc</th><th>语言数</th></tr></thead>
-<tbody>{''.join(xnli_rows(root))}</tbody></table></section>
+<h2>XNLI 跨语言（seed 42，英文 MNLI 训练 → 15 语零样本）</h2>
+<table><thead><tr><th>方法</th><th>状态</th><th>Macro acc / 语言</th></tr></thead>
+<tbody>{''.join(xtreme_rows(root, 'xnli'))}</tbody></table></section>
 <section id="pawsx" class="panel">
-<h2>PAWS-X 跨语言（seed 42）</h2>
-<table><thead><tr><th>方法</th><th>Macro acc</th><th>语言数</th></tr></thead>
-<tbody>{''.join(pawsx_rows(root))}</tbody></table></section>
-<section id="lm" class="panel"><h2>语言建模</h2><p class="muted">待训练 checkpoint 后评测</p></section>
+<h2>PAWS-X 跨语言（seed 42，英文训练 → 7 语零样本）</h2>
+<table><thead><tr><th>方法</th><th>状态</th><th>Macro acc / 语言</th></tr></thead>
+<tbody>{''.join(xtreme_rows(root, 'pawsx'))}</tbody></table></section>
+<section id="lm" class="panel">
+<h2>语言建模（seed 42，FineWeb 400 步训练 → WikiText / LAMBADA）</h2>
+<table><thead><tr><th>方法</th><th>状态</th><th>WikiText PPL</th><th>bits/byte</th><th>LAMBADA acc</th></tr></thead>
+<tbody>{''.join(lm_rows(root))}</tbody></table></section>
 </main>
 <script>
 document.querySelectorAll('button.tab').forEach(b=>b.onclick=()=>{{
@@ -173,6 +222,7 @@ def main() -> None:
         if args.once:
             break
         import time
+
         time.sleep(args.interval)
 
 
