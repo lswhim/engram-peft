@@ -173,13 +173,29 @@ class TrainJob:
 
 
 def preencode_complete(name: str, log: Path, proc_pid: int | None) -> bool:
-    """Complete only when the recorded pre-encode PID exited and log has marker."""
+    """Complete when the recorded pre-encode PID exited and log has marker,
+    or when the expected cache files already exist (pre-encode may have been
+    done by a previous run whose log/marker was lost)."""
     st = read_json(state_for(name))
     if st.get("status") == "done":
         return True
     if proc_pid is not None and process_alive(proc_pid):
         return False
-    return "[preencode] done" in log_tail(log)
+    if "[preencode] done" in log_tail(log):
+        return True
+    if name == "preencode_xnli_keyed":
+        required = [
+            SEM_TABLE / "xnli_cache_semantic_keyed_seed42" / "semantic_codes.sqlite3",
+            SEM_TABLE / "xnli_cache_semantic_flatten_seed42" / "semantic_codes.sqlite3",
+        ]
+    elif name == "preencode_lm_keyed":
+        required = [
+            SEM_TABLE / "lm100m_cache_semantic_keyed_seed42" / "semantic_codes.sqlite3",
+            SEM_TABLE / "lm100m_cache_semantic_flatten_seed42" / "semantic_codes.sqlite3",
+        ]
+    else:
+        required = []
+    return all(path.is_file() and path.stat().st_size > 0 for path in required)
 
 
 def copy_flatten_caches(seed: int = 42) -> None:
