@@ -138,8 +138,15 @@ def process_uses_gpu(pid: int, index: int) -> bool:
     return str(pid) in set(line.strip() for line in out.splitlines())
 
 
-def process_alive(pid: int) -> bool:
-    return Path(f"/proc/{pid}").exists()
+def process_alive(pattern: str) -> bool:
+    """True when a process whose cmdline matches ``pattern`` exists."""
+    out = subprocess.run(
+        ["pgrep", "-f", pattern],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    return bool(out)
 
 
 def log_tail(path: Path, limit: int = 20_000) -> str:
@@ -165,11 +172,12 @@ class TrainJob:
         return ["bash", self.worker, str(gpu), self.mode]
 
 
-def preencode_complete(name: str, log: Path) -> bool:
-    """A pre-encode job is complete when its process exited and log has marker."""
+def preencode_complete(name: str, log: Path, proc_pattern: str) -> bool:
+    """Complete only when the matching process exited and the log has marker."""
     st = read_json(state_for(name))
-    pid = st.get("pid")
-    if isinstance(pid, int) and process_alive(pid):
+    if st.get("status") == "done":
+        return True
+    if process_alive(proc_pattern):
         return False
     return "[preencode] done" in log_tail(log)
 
@@ -258,9 +266,11 @@ def main() -> None:
     preencode_logs = {
         "preencode_lm_keyed": (
             Path("/tmp/preencode_lm_full.log"),
+            "preencode_xnli_lm.py --mode lm",
         ),
         "preencode_xnli_keyed": (
             Path("/tmp/preencode_xnli_full.log"),
+            "preencode_xnli_lm.py --mode xnli",
         ),
     }
     jobs = [
@@ -279,11 +289,11 @@ def main() -> None:
     while True:
         try:
             ready_deps: set[str] = set()
-            for dep_name, log in preencode_logs.items():
+            for dep_name, (log, proc_pattern) in preencode_logs.items():
                 st = read_json(state_for(dep_name))
                 if st.get("status") == "done":
                     ready_deps.add(dep_name)
-                elif preencode_complete(dep_name, log):
+                elif preencode_complete(dep_name, log, proc_pattern):
                     write_json(
                         state_for(dep_name),
                         {"name": dep_name, "status": "done", "updated_at": now()},
