@@ -194,6 +194,15 @@ def last_step_progress(
     return f"{current}/{total}", eta
 
 
+def log_is_stale(path: Path, max_age: float = 600.0) -> bool:
+    """True when a log exists but has not been written for ``max_age`` seconds."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False
+    return (time.time() - mtime) > max_age
+
+
 def step_cell(logdir: Path, log_name: str, expected_total: int | None = None) -> str:
     progress = last_step_progress(logdir / log_name, expected_total)
     if progress is None:
@@ -507,17 +516,25 @@ def machine_rows(root: Path, logdir: Path) -> list[str]:
             logdir / str(task["log"]),
             expected_total=task.get("expected_total"),
         )
+        log_path = logdir / str(task["log"])
         if complete:
             state = "<span class='ok'>完成</span>"
             step = "—"
         elif progress is None:
-            state = "<span class='queue'>排队中</span>"
-            step = "—"
+            if log_is_stale(log_path):
+                state = "<span class='queue'>已停止</span>"
+                step = "—"
+            else:
+                state = "<span class='queue'>排队中</span>"
+                step = "—"
         else:
             step, eta = progress
-            state = "<span class='run'>运行中</span>"
-            if eta:
-                step = f"{step} · ETA {eta}"
+            if log_is_stale(log_path):
+                state = "<span class='queue'>已停止</span>"
+            else:
+                state = "<span class='run'>运行中</span>"
+                if eta:
+                    step = f"{step} · ETA {eta}"
 
         rows.append(
             "<tr>"
