@@ -346,6 +346,7 @@ def xtreme_rows(root: Path, family: str, logdir: Path) -> list[str]:
 
 def lm_rows(root: Path, logdir: Path) -> list[str]:
     parsed: dict[str, dict[str, float | None]] = {}
+    state_dir = logdir / ".auto_resume"
     for method in LM_METHODS:
         result_name = LM_RESULT_NAMES[method]
         payload = read_json(root / "standard_lm" / f"{result_name}_seed42.json")
@@ -369,26 +370,35 @@ def lm_rows(root: Path, logdir: Path) -> list[str]:
 
     rows: list[str] = []
     for method in LM_METHODS:
+        state_payload = read_json(state_dir / f"lm_{method}.json")
+        state = state_payload.get("status")
         if not parsed.get(method):
             log_name = f"lm100m_{method}_seed42.log"
             log_path = logdir / log_name
             step = step_cell(logdir, log_name)
-            if not log_path.exists():
+            if state == "launched":
+                rows.append(
+                    f"<tr><th>{html.escape(method)}</th>"
+                    f"<td><span class='run'>运行中</span>"
+                    f" <span class='step'>{html.escape(step)}</span></td>"
+                    f"<td>—</td><td>—</td><td>—</td></tr>"
+                )
+            elif state == "queued":
                 rows.append(
                     f"<tr><th>{html.escape(method)}</th>"
                     f"<td><span class='queue'>排队中</span><td>—</td><td>—</td><td>—</td></tr>"
                 )
-            elif log_is_stale(log_path):
+            elif state is None and log_path.exists() and not log_is_stale(log_path):
                 rows.append(
                     f"<tr><th>{html.escape(method)}</th>"
-                    f"<td><span class='queue'>已停止</span>"
+                    f"<td><span class='run'>运行中</span>"
                     f" <span class='step'>{html.escape(step)}</span></td>"
                     f"<td>—</td><td>—</td><td>—</td></tr>"
                 )
             else:
                 rows.append(
                     f"<tr><th>{html.escape(method)}</th>"
-                    f"<td><span class='run'>运行中</span>"
+                    f"<td><span class='queue'>已停止</span>"
                     f" <span class='step'>{html.escape(step)}</span></td>"
                     f"<td>—</td><td>—</td><td>—</td></tr>"
                 )
