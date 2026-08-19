@@ -61,6 +61,7 @@ MACHINE_TASKS = (
         "gpu": "GPU0",
         "label": "XNLI · semantic_keyed",
         "log": "xnli_semantic_keyed.log",
+        "expected_total": 12272,
         "complete": "xnli_semantic_keyed/semantic_keyed/rq_semantic_keyed_seed42/metrics.json",
     },
     {
@@ -68,6 +69,7 @@ MACHINE_TASKS = (
         "gpu": "GPU1",
         "label": "XNLI · semantic_flatten",
         "log": "xnli_semantic_flatten.log",
+        "expected_total": 12272,
         "complete": "xnli_semantic_keyed/semantic_flatten/rq_flatten_seed42/metrics.json",
     },
     {
@@ -75,6 +77,7 @@ MACHINE_TASKS = (
         "gpu": "GPU2",
         "label": "WikiBigEdit · semantic_keyed",
         "log": "wikibigedit_official_semantic_keyed_seed42_resume.log",
+        "expected_total": 2726,
         "complete": "semantic_memory/wikibigedit_official/semantic_keyed/seed_42/t7_at_502382.json",
     },
     {
@@ -82,6 +85,7 @@ MACHINE_TASKS = (
         "gpu": "GPU3",
         "label": "WikiBigEdit · semantic_flatten",
         "log": "wikibigedit_official_semantic_flatten_seed42_resume.log",
+        "expected_total": 2726,
         "complete": "semantic_memory/wikibigedit_official/semantic_flatten/seed_42/t7_at_502382.json",
     },
     {
@@ -89,6 +93,7 @@ MACHINE_TASKS = (
         "gpu": "GPU0",
         "label": "WikiBigEdit · arithmetic",
         "log": "wikibigedit_official_arithmetic_seed42.log",
+        "expected_total": 2726,
         "complete": "semantic_memory/wikibigedit_official/arithmetic/seed_42/t7_at_502382.json",
     },
     {
@@ -96,6 +101,7 @@ MACHINE_TASKS = (
         "gpu": "GPU1",
         "label": "WikiBigEdit · shuffled_flatten",
         "log": "wikibigedit_official_shuffled_flatten_seed42_resume.log",
+        "expected_total": 2726,
         "complete": "semantic_memory/wikibigedit_official/shuffled_flatten/seed_42/t7_at_502382.json",
     },
     {
@@ -103,6 +109,7 @@ MACHINE_TASKS = (
         "gpu": "GPU2",
         "label": "WikiBigEdit · shuffled_semantic_keyed",
         "log": "wikibigedit_official_shuffled_semantic_keyed_seed42_resume.log",
+        "expected_total": 2726,
         "complete": "semantic_memory/wikibigedit_official/shuffled_semantic_keyed/seed_42/t7_at_502382.json",
     },
     {
@@ -110,6 +117,7 @@ MACHINE_TASKS = (
         "gpu": "GPU3",
         "label": "LM 100M · arithmetic",
         "log": "lm100m_arithmetic_seed42.log",
+        "expected_total": 763,
         "complete": "standard_lm/100m_arithmetic_seed42.json",
     },
     {
@@ -117,6 +125,7 @@ MACHINE_TASKS = (
         "gpu": "GPU7",
         "label": "LM 100M · semantic_keyed",
         "log": "lm100m_semantic_keyed_seed42.log",
+        "expected_total": 763,
         "complete": "standard_lm/100m_semantic_keyed_seed42.json",
     },
 )
@@ -158,16 +167,22 @@ def tail_text(path: Path, max_bytes: int = 20000) -> str:
         return ""
 
 
-def last_step_progress(path: Path) -> tuple[str, str | None] | None:
+def last_step_progress(
+    path: Path, expected_total: int | None = None
+) -> tuple[str, str | None] | None:
     matches = _STEP_RE.findall(tail_text(path))
     if not matches:
         return None
+    if expected_total is not None:
+        matches = [m for m in matches if int(m[1]) == expected_total]
+        if not matches:
+            return None
     current, total, eta = matches[-1]
     return f"{current}/{total}", eta
 
 
-def step_cell(logdir: Path, log_name: str) -> str:
-    progress = last_step_progress(logdir / log_name)
+def step_cell(logdir: Path, log_name: str, expected_total: int | None = None) -> str:
+    progress = last_step_progress(logdir / log_name, expected_total)
     if progress is None:
         return "—"
     step, eta = progress
@@ -474,7 +489,10 @@ def machine_rows(root: Path, logdir: Path) -> list[str]:
             # ``metrics.json`` exists as soon as a run starts with
             # ``status=loading_data``, so file existence is not enough.
             complete = payload.get("status") == "complete"
-        progress = last_step_progress(logdir / str(task["log"]))
+        progress = last_step_progress(
+            logdir / str(task["log"]),
+            expected_total=task.get("expected_total"),
+        )
         if complete:
             state = "<span class='ok'>完成</span>"
             step = "—"
