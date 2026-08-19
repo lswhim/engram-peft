@@ -40,20 +40,20 @@ case "$MODE" in
   semantic_keyed)
     TABLE="$SEMANTIC_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},${EXTRA}"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_${MODE}_seed${SEED},${COMMON},${EXTRA}"
     ;;
   semantic_flatten)
     TABLE="$SEMANTIC_TABLE"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},memory_fusion=flatten"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_${MODE}_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
   shuffled_semantic_keyed)
     TABLE="$SHUFFLED_TABLE"
     EXTRA="memory_fusion=head_factorized,head_router_selection=semantic_keyed"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},${EXTRA}"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_${MODE}_seed${SEED},${COMMON},${EXTRA}"
     ;;
   shuffled_flatten)
     TABLE="$SHUFFLED_TABLE"
-    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_seed${SEED},${COMMON},memory_fusion=flatten"
+    METHOD="engram:hash_backend=rq,rq_table_dir=${TABLE},rq_cache_dir=${TABLE}/official_cache_${MODE}_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
   arithmetic)
     METHOD="engram:hash_backend=arithmetic_fixed,engram_vocab_size_per_ngram=[128,128],${COMMON},memory_fusion=flatten"
@@ -78,14 +78,20 @@ for index in "${!TIMESTEPS[@]}"; do
     echo "timestep size mismatch for $name: expected=$expected actual=$actual" >&2
     exit 4
   fi
+  checkpoint="$OUT_ROOT/$MODE/seed_${SEED}/checkpoint_t${index}"
+  expected_adapter="$checkpoint/engram_adapters.safetensors"
+  if [[ "$MODE" == lora ]]; then
+    expected_adapter="$checkpoint/adapter_model.safetensors"
+  fi
+  if [[ -f "$expected_adapter" ]]; then
+    echo "skip existing checkpoint: $checkpoint"
+    previous="$checkpoint"
+    checkpoints[$index]="$checkpoint"
+    continue
+  fi
   steps=$(( (actual + 19) / 20 ))
   cumulative=$(( cumulative + actual ))
   suffix="_wikibigedit_official_${MODE}_seed${SEED}_t${index}"
-  checkpoint="$OUT_ROOT/$MODE/seed_${SEED}/checkpoint_t${index}"
-  if [[ -e "$checkpoint" ]]; then
-    echo "refusing to overwrite existing official checkpoint: $checkpoint" >&2
-    exit 5
-  fi
   resume_args=()
   if [[ -n "$previous" ]]; then
     if [[ "$MODE" == lora ]]; then
@@ -95,10 +101,8 @@ for index in "${!TIMESTEPS[@]}"; do
     fi
   fi
   save_args=(--engram_save_dir "$checkpoint")
-  expected_adapter="$checkpoint/engram_adapters.safetensors"
   if [[ "$MODE" == lora ]]; then
     save_args=(--lora_save_dir "$checkpoint")
-    expected_adapter="$checkpoint/adapter_model.safetensors"
   fi
   "$PY" -u examples/compare_engram_lora.py \
     --model_name "$BASE" --dataset semantic_manifest \
@@ -113,7 +117,7 @@ for index in "${!TIMESTEPS[@]}"; do
     exit 6
   fi
   previous="$checkpoint"
-  checkpoints+=("$previous")
+  checkpoints[$index]="$checkpoint"
   printf '%s\n' "$previous" > "$OUT_ROOT/$MODE/seed_${SEED}/checkpoint_t${index}.txt"
 done
 

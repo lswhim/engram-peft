@@ -94,6 +94,11 @@ class RQNgramMapping:
             cache_path = Path(self.cache_dir)
             cache_path.mkdir(parents=True, exist_ok=True)
             self._cache = sqlite3.connect(cache_path / "semantic_codes.sqlite3")
+            # Concurrent processes used to share one cache file and die with
+            # "database is locked". Each method now gets its own cache_dir, but
+            # keep a timeout so a transient writer collision retries instead of
+            # aborting a multi-hour run.
+            self._cache.execute("PRAGMA busy_timeout = 30000")
             self._cache.execute(
                 "CREATE TABLE IF NOT EXISTS codes "
                 "(n INTEGER NOT NULL, key INTEGER NOT NULL, code BLOB NOT NULL, "
