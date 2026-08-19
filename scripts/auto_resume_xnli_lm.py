@@ -312,6 +312,7 @@ def main() -> None:
             if "preencode_lm_keyed" in ready_deps or "preencode_xnli_keyed" in ready_deps:
                 copy_flatten_caches()
 
+            reserved: set[int] = set()
             for job in jobs:
                 st = read_json(state_for(job.name))
                 if st.get("status") == "launched":
@@ -321,7 +322,7 @@ def main() -> None:
                 if job.mode == "semantic_flatten" and not flatten_cache_ready():
                     continue
 
-                gpu = find_free_gpu(gpus)
+                gpu = find_free_gpu([idx for idx in gpus if idx not in reserved])
                 if gpu is None:
                     print(
                         f"[auto-resume] no free gpu for {job.name}; waiting",
@@ -329,6 +330,7 @@ def main() -> None:
                     )
                     continue
                 launch(job, gpu)
+                reserved.add(gpu)
 
         except Exception:
             # A single transient failure must not kill the long-lived scheduler.
