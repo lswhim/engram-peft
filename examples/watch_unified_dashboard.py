@@ -51,6 +51,76 @@ WIKI_METHOD_LABELS = {
     "shuffled_semantic_keyed": "Shuffled-keyed",
 }
 
+# Machine / task inventory. run_logs live on the shared CFS, so the watcher on
+# any one machine can read every worker's tqdm progress regardless of which
+# host the worker actually runs on. ``complete_path`` is an ``outputs``-relative
+# file that exists only once that task has finished.
+MACHINE_TASKS = (
+    {
+        "machine": "1号机 (4×A100)",
+        "gpu": "GPU0",
+        "label": "XNLI · semantic_keyed",
+        "log": "xnli_semantic_keyed.log",
+        "complete": "xnli_semantic_keyed/semantic_keyed/rq_semantic_keyed_seed42/metrics.json",
+    },
+    {
+        "machine": "1号机 (4×A100)",
+        "gpu": "GPU1",
+        "label": "XNLI · semantic_flatten",
+        "log": "xnli_semantic_flatten.log",
+        "complete": "xnli_semantic_keyed/semantic_flatten/rq_flatten_seed42/metrics.json",
+    },
+    {
+        "machine": "1号机 (4×A100)",
+        "gpu": "GPU2",
+        "label": "WikiBigEdit · semantic_keyed",
+        "log": "wikibigedit_official_semantic_keyed_seed42_resume.log",
+        "complete": "semantic_memory/wikibigedit_official/semantic_keyed/seed_42/t7_at_502382.json",
+    },
+    {
+        "machine": "1号机 (4×A100)",
+        "gpu": "GPU3",
+        "label": "WikiBigEdit · semantic_flatten",
+        "log": "wikibigedit_official_semantic_flatten_seed42_resume.log",
+        "complete": "semantic_memory/wikibigedit_official/semantic_flatten/seed_42/t7_at_502382.json",
+    },
+    {
+        "machine": "3号机 (8×A100)",
+        "gpu": "GPU0",
+        "label": "WikiBigEdit · arithmetic",
+        "log": "wikibigedit_official_arithmetic_seed42.log",
+        "complete": "semantic_memory/wikibigedit_official/arithmetic/seed_42/t7_at_502382.json",
+    },
+    {
+        "machine": "3号机 (8×A100)",
+        "gpu": "GPU1",
+        "label": "WikiBigEdit · shuffled_flatten",
+        "log": "wikibigedit_official_shuffled_flatten_seed42_resume.log",
+        "complete": "semantic_memory/wikibigedit_official/shuffled_flatten/seed_42/t7_at_502382.json",
+    },
+    {
+        "machine": "3号机 (8×A100)",
+        "gpu": "GPU2",
+        "label": "WikiBigEdit · shuffled_semantic_keyed",
+        "log": "wikibigedit_official_shuffled_semantic_keyed_seed42_resume.log",
+        "complete": "semantic_memory/wikibigedit_official/shuffled_semantic_keyed/seed_42/t7_at_502382.json",
+    },
+    {
+        "machine": "3号机 (8×A100)",
+        "gpu": "GPU3",
+        "label": "LM 100M · arithmetic",
+        "log": "lm100m_arithmetic_seed42.log",
+        "complete": "standard_lm/100m_arithmetic_seed42.json",
+    },
+    {
+        "machine": "3号机 (8×A100)",
+        "gpu": "GPU7",
+        "label": "LM 100M · semantic_keyed",
+        "log": "lm100m_semantic_keyed_seed42.log",
+        "complete": "standard_lm/100m_semantic_keyed_seed42.json",
+    },
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -385,6 +455,43 @@ def wiki_axis_table_rows(root: Path) -> list[str]:
     return rows
 
 
+def machine_rows(root: Path, logdir: Path) -> list[str]:
+    """Render one row per task with its latest step/ETA or completion state."""
+    rows: list[str] = []
+    current_machine: str | None = None
+    for task in MACHINE_TASKS:
+        if task["machine"] != current_machine:
+            current_machine = task["machine"]
+            rows.append(
+                "<tr class='machine-head'>"
+                f"<th colspan='4'>{html.escape(str(current_machine))}</th></tr>"
+            )
+
+        complete = (root / str(task["complete"])).is_file()
+        progress = last_step_progress(logdir / str(task["log"]))
+        if complete:
+            state = "<span class='ok'>完成</span>"
+            step = "—"
+        elif progress is None:
+            state = "<span class='queue'>排队中</span>"
+            step = "—"
+        else:
+            step, eta = progress
+            state = "<span class='run'>运行中</span>"
+            if eta:
+                step = f"{step} · ETA {eta}"
+
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(task['gpu']))}</td>"
+            f"<th>{html.escape(str(task['label']))}</th>"
+            f"<td>{state}</td>"
+            f"<td class='step'>{html.escape(step)}</td>"
+            "</tr>"
+        )
+    return rows
+
+
 def render(root: Path, logdir: Path, now: str) -> str:
     timestep_heads = "".join(
         f"<th>T{i}<span class='sub'>{(WIKI_COUNTS[i] if i == 0 else sum(WIKI_COUNTS[:i+1])):,}</span></th>"
@@ -426,6 +533,7 @@ tbody tr:last-child th,tbody tr:last-child td{{border-bottom:none}}
 .wiki-axes{{display:grid;grid-template-columns:repeat(5,auto);gap:6px 12px;min-width:360px}}
 .wiki-axes span{{display:inline-flex;gap:5px;align-items:center;font-size:12px}}
 .wiki-axes b{{font-variant-numeric:tabular-nums;font-weight:700}}
+.machine-head th{{background:#f3f4f6;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.03em}}
 details summary{{cursor:pointer;font-weight:600}}details table{{margin-top:6px}}
 @media(max-width:760px){{.masthead{{flex-direction:column;align-items:flex-start}}.masthead .meta{{text-align:left}}.wiki-axes{{grid-template-columns:repeat(3,auto)}}}}
 </style></head><body><main>
@@ -436,6 +544,7 @@ details summary{{cursor:pointer;font-weight:600}}details table{{margin-top:6px}}
 <button class="tab" data-tab="pawsx">PAWS-X</button>
 <button class="tab" data-tab="lm">语言建模</button>
 <button class="tab" data-tab="wiki">WikiBigEdit</button>
+<button class="tab" data-tab="machines">机器</button>
 </nav>
 <section id="ke" class="panel active">
 <h2>知识编辑（seed 42）</h2>
@@ -467,6 +576,12 @@ details summary{{cursor:pointer;font-weight:600}}details table{{margin-top:6px}}
 <div class="card table-wrap">
 <table><thead><tr><th>方法</th><th>Update <span class="dir">↑</span></th><th>Rephrase <span class="dir">↑</span></th><th>Personas <span class="dir">↑</span></th><th>Mhop <span class="dir">↑</span></th><th>Locality <span class="dir">↑</span></th></tr></thead>
 <tbody>{''.join(wiki_axis_table_rows(root))}</tbody></table>
+</div></section>
+<section id="machines" class="panel">
+<h2>机器与任务进度</h2>
+<div class="card table-wrap">
+<table><thead><tr><th>GPU</th><th>任务</th><th>状态</th><th>进度</th></tr></thead>
+<tbody>{''.join(machine_rows(root, logdir))}</tbody></table>
 </div></section>
 </main>
 <script>
