@@ -308,7 +308,16 @@ def launched_worker_alive(job: TrainJob) -> bool:
         text=True,
         check=False,
     ).stdout.strip()
-    return any(Path(f"/proc/{pid}").exists() for pid in out.splitlines())
+    for pid in out.splitlines():
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text().split()
+        except (OSError, ValueError):
+            continue
+        # A zombie (state Z) has no live worker anymore and must not reserve
+        # its GPU slot; otherwise a crashed worker can block scheduling forever.
+        if len(stat) > 2 and stat[2] != "Z":
+            return True
+    return False
 
 
 def main() -> None:
