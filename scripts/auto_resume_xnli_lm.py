@@ -293,19 +293,19 @@ def launch(job: TrainJob, gpu: int) -> None:
 def launched_worker_alive(job: TrainJob) -> bool:
     """Return True when a worker for this job is still running."""
     if job.worker.endswith("run_lm_100m_worker.sh"):
-        needle = f"run_lm_100m_worker.sh {job.mode}"
+        needle = f"bash scripts/run_lm_100m_worker.sh .*{job.mode}"
     else:
         # The XNLI worker may have been launched manually (directly through
         # run_xtreme_xnli.py), so detect by the router instead of the wrapper.
         router = "semantic_keyed" if job.mode == "semantic_keyed" else "flatten"
-        needle = f"run_xtreme_xnli.py .*rq_router {router}"
+        needle = f"python -u examples/run_xtreme_xnli.py .*rq_router {router}"
     out = subprocess.run(
         ["pgrep", "-f", needle],
         capture_output=True,
         text=True,
         check=False,
     ).stdout.strip()
-    return bool(out)
+    return any(Path(f"/proc/{pid}").exists() for pid in out.splitlines())
 
 
 def main() -> None:
