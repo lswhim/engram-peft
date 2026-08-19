@@ -35,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=("xnli", "lm"), required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--lm-rows", type=int, default=100_000)
+    parser.add_argument("--limit-rows", type=int, default=0,
+                        help="Stop after this many rows (0 = full corpus).")
     parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--device", default="cuda")
@@ -228,6 +230,8 @@ def main() -> None:
     for text in rows:
         text_batch.append(text)
         rows_seen += 1
+        if args.limit_rows and rows_seen >= args.limit_rows:
+            break
         if rows_seen % flush_every == 0:
             flush()
             text_batch.clear()
