@@ -315,8 +315,9 @@ def main() -> None:
         ),
     }
     jobs = [
-        TrainJob("xnli_semantic_keyed", "scripts/run_xnli_semantic_keyed_worker.sh",
-                 "semantic_keyed", "preencode_xnli_keyed"),
+        # XNLI keyed is intentionally running on 1号机 (PID 18414).  This
+        # scheduler only manages 3号机 and cannot see that process, so it must
+        # not be in the scheduling list or it would launch a duplicate.
         TrainJob("xnli_semantic_flatten", "scripts/run_xnli_semantic_keyed_worker.sh",
                  "semantic_flatten", "preencode_xnli_keyed"),
         TrainJob("lm_semantic_keyed", "scripts/run_lm_100m_worker.sh",
@@ -347,6 +348,7 @@ def main() -> None:
                 copy_flatten_caches()
 
             reserved: set[int] = set()
+            launched_this_pass = False
             for job in jobs:
                 st = read_json(state_for(job.name))
                 if st.get("status") == "launched":
@@ -357,7 +359,12 @@ def main() -> None:
                             state_for(job.name),
                             {"name": job.name, "status": "queued", "updated_at": now()},
                         )
-                        print(f"[auto-resume] {job.name} worker died; requeued", flush=True)
+                    print(f"[auto-resume] {job.name} worker died; requeued", flush=True)
+                    continue
+                if launched_this_pass:
+                    # Only start one worker per pass: the free-GPU probe can be
+                    # stale for a freshly launched process, and piling several
+                    # jobs onto one card caused the earlier OOM pile-up.
                     continue
                 if job.preencode_name and job.preencode_name not in ready_deps:
                     continue
@@ -373,6 +380,7 @@ def main() -> None:
                     continue
                 launch(job, gpu)
                 reserved.add(gpu)
+                launched_this_pass = True
 
         except Exception:
             # A single transient failure must not kill the long-lived scheduler.
