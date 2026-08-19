@@ -467,7 +467,13 @@ def machine_rows(root: Path, logdir: Path) -> list[str]:
                 f"<th colspan='4'>{html.escape(str(current_machine))}</th></tr>"
             )
 
-        complete = (root / str(task["complete"])).is_file()
+        complete_path = root / str(task["complete"])
+        complete = False
+        if complete_path.is_file():
+            payload = read_json(complete_path)
+            # ``metrics.json`` exists as soon as a run starts with
+            # ``status=loading_data``, so file existence is not enough.
+            complete = payload.get("status") == "complete"
         progress = last_step_progress(logdir / str(task["log"]))
         if complete:
             state = "<span class='ok'>完成</span>"
