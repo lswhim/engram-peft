@@ -370,13 +370,23 @@ def lm_rows(root: Path, logdir: Path) -> list[str]:
     rows: list[str] = []
     for method in LM_METHODS:
         if not parsed.get(method):
-            step = step_cell(logdir, f"lm100m_{method}_seed42.log")
-            rows.append(
-                f"<tr><th>{html.escape(method)}</th>"
-                f"<td><span class='run'>运行中</span>"
-                f" <span class='step'>{html.escape(step)}</span></td>"
-                f"<td>—</td><td>—</td><td>—</td></tr>"
-            )
+            log_name = f"lm100m_{method}_seed42.log"
+            log_path = logdir / log_name
+            step = step_cell(logdir, log_name)
+            if log_is_stale(log_path):
+                rows.append(
+                    f"<tr><th>{html.escape(method)}</th>"
+                    f"<td><span class='queue'>已停止</span>"
+                    f" <span class='step'>{html.escape(step)}</span></td>"
+                    f"<td>—</td><td>—</td><td>—</td></tr>"
+                )
+            else:
+                rows.append(
+                    f"<tr><th>{html.escape(method)}</th>"
+                    f"<td><span class='run'>运行中</span>"
+                    f" <span class='step'>{html.escape(step)}</span></td>"
+                    f"<td>—</td><td>—</td><td>—</td></tr>"
+                )
             continue
         values = parsed[method]
         cls = lambda key: "best" if winners[key] == method else ""
