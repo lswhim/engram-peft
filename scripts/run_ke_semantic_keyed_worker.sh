@@ -26,7 +26,8 @@ case "$MODE" in
     SPEC="engram:hash_backend=rq,rq_table_dir=${SEM_TABLE},rq_cache_dir=${SEM_TABLE}/ke_cache_seed${SEED},${COMMON},memory_fusion=flatten"
     ;;
   arithmetic)
-    SPEC="engram:hash_backend=arithmetic_fixed,engram_vocab_size_per_ngram=[8192,8192],${COMMON},memory_fusion=flatten"
+    # Match RQ per-head capacity: K=256 per head x 8 heads = 2048 total per n-gram order.
+    SPEC="engram:hash_backend=arithmetic_fixed,engram_vocab_size_per_ngram=[2048,2048],${COMMON},memory_fusion=flatten"
     ;;
   *) echo "unknown mode: $MODE" >&2; exit 2 ;;
 esac
