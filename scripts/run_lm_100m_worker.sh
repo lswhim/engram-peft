@@ -25,6 +25,12 @@ export PYTHONPATH="$ROOT/src:$ROOT"
 export HF_HUB_DISABLE_XET=1
 export https_proxy=http://star-proxy.oa.com:3128 http_proxy=http://star-proxy.oa.com:3128
 export no_proxy=.woa.com,.oa.com,localhost,127.0.0.1
+# Bound per-process CPU threads so concurrent workers on one shared pod do not
+# oversubscribe the host CPUs and starve each other's dataloader/encoder path.
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+export TORCH_NUM_THREADS=8
 mkdir -p run_logs outputs/standard_lm
 
 COMMON="n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[11,21]"

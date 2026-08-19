@@ -30,6 +30,12 @@ export CUDA_VISIBLE_DEVICES="$GPU_ID"
 export PYTHONPATH="$ROOT/src:$ROOT"
 export HF_HUB_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
+# Bound per-process CPU threads so concurrent workers on one shared pod do not
+# oversubscribe the host CPUs and starve each other's dataloader/encoder path.
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+export TORCH_NUM_THREADS=8
 mkdir -p run_logs "$OUT_ROOT/$MODE/seed_${SEED}"
 
 COMMON="n_head_per_ngram=8,use_sparse_embeddings=False,target_layers=[11,21]"
