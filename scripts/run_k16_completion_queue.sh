@@ -32,7 +32,7 @@ JOBS=(
 )
 
 GPUS=(0 1 2 3 4 5 6 7)
-declare -A PID_GPU PID_JOB
+declare -A PID_GPU=() PID_JOB=()
 next=0
 total=${#JOBS[@]}
 echo "K16_QUEUE_START total=$total time=$(date -Is)"
