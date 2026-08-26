@@ -42,6 +42,15 @@ if [[ "$MODE" == shuffled_keyed ]]; then
   test -f "$SHUF_TABLE/meta.json"
 fi
 
+if [[ "$MODE" != arithmetic ]]; then
+  CACHE_DIR="$SEM_TABLE/lm100m_k16_emb06b_${MODE}_seed${SEED}"
+  [[ "$MODE" == shuffled_keyed ]] && CACHE_DIR="$SHUF_TABLE/lm100m_k16_emb06b_${MODE}_seed${SEED}"
+  test -s "$CACHE_DIR/preencode_complete.json" || {
+    echo "refusing semantic LM run without warm cache: $CACHE_DIR" >&2
+    exit 3
+  }
+fi
+
 SUFFIX="_lm100m_k16_emb06b_${MODE}_seed${SEED}"
 LOG="run_logs/lm100m_k16_emb06b_${MODE}_seed${SEED}.log"
 "$PY" -u examples/compare_engram_lora.py \

@@ -144,9 +144,11 @@ def iter_lm_rows(seed: int, rows: int):
         split="train",
         streaming=True,
     ).skip(address_reserve_rows).shuffle(
-        seed=seed, buffer_size=max(rows + 200, 20_000)
+        seed=seed, buffer_size=max(rows, 20_000)
     )
-    for example in islice(raw, rows + 200):
+    # The benchmark reserves the final 200 rows for evaluation.  Only warm the
+    # training side so evaluation keeps its genuine dynamic-OOV behavior.
+    for example in islice(raw, rows):
         text = example.get("text")
         if text:
             yield str(text)
@@ -243,6 +245,21 @@ def main() -> None:
             flush()
             text_batch.clear()
     flush()
+    marker = Path(args.cache_dir) / "preencode_complete.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "mode": args.mode,
+                "seed": args.seed,
+                "rows": rows_seen,
+                "max_length": args.max_length,
+                "table_dir": str(Path(args.table_dir)),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print("[preencode] done", flush=True)
 
 
