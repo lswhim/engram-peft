@@ -10,6 +10,10 @@ SHUF_CACHE=rq_tables/fineweb_qwen3emb06b_M8K16_300k_strict_runtime_shuffled_seed
 
 echo "WAITING_FOR_LM_PREENCODE time=$(date -Is)"
 while [[ ! -s "$SEM_CACHE/preencode_complete.json" || ! -s "$SHUF_CACHE/preencode_complete.json" ]]; do
+  if ! pgrep -f "preencode_xnli_lm.py --mode lm" >/dev/null 2>&1; then
+    echo "LM_PREENCODE_ABORTED time=$(date -Is)" >&2
+    exit 4
+  fi
   sleep 60
 done
 
