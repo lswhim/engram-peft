@@ -92,6 +92,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print non-finite gradients before the first optimizer step.",
     )
+    parser.add_argument(
+        "--detect-anomaly",
+        action="store_true",
+        help="Enable PyTorch autograd anomaly detection for diagnostics.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-steps", type=int, default=95)
     parser.add_argument("--checkpoint-steps", type=int, default=239)
@@ -237,6 +242,8 @@ def save_final(model: torch.nn.Module, output_dir: Path) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.detect_anomaly:
+        torch.autograd.set_detect_anomaly(True)
     set_seed(args.seed)
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     tokens_per_step = (
