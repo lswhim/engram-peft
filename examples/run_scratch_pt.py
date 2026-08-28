@@ -82,6 +82,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable BF16 autocast for numerical-stability diagnostics.",
     )
+    parser.add_argument(
+        "--no-gradient-checkpointing",
+        action="store_true",
+        help="Disable activation checkpointing for stability diagnostics.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-steps", type=int, default=95)
     parser.add_argument("--checkpoint-steps", type=int, default=239)
@@ -252,7 +257,7 @@ def main() -> None:
         report_to="none",
         bf16=not args.fp32,
         tf32=True,
-        gradient_checkpointing=True,
+        gradient_checkpointing=not args.no_gradient_checkpointing,
         dataloader_num_workers=args.num_workers,
         dataloader_pin_memory=True,
         remove_unused_columns=False,
