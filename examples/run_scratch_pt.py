@@ -87,6 +87,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable activation checkpointing for stability diagnostics.",
     )
+    parser.add_argument(
+        "--debug-gradients",
+        action="store_true",
+        help="Print non-finite gradients before the first optimizer step.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-steps", type=int, default=95)
     parser.add_argument("--checkpoint-steps", type=int, default=239)
@@ -197,6 +202,29 @@ class ScratchCheckpointCallback(TrainerCallback):
         return control
 
 
+class GradientDebugCallback(TrainerCallback):
+    def on_pre_optimizer_step(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+        del args
+        if not kwargs.get("model") or state.global_step > 0:
+            return control
+        model = unwrap_model(kwargs["model"])
+        bad = []
+        for name, parameter in model.named_parameters():
+            if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
+                bad.append(
+                    {
+                        "name": name,
+                        "finite": int(torch.isfinite(parameter.grad).sum()),
+                        "total": parameter.grad.numel(),
+                        "max_abs": float(torch.nan_to_num(parameter.grad.detach()).abs().max()),
+                    }
+                )
+                if len(bad) >= 8:
+                    break
+        print(f"[gradient debug] nonfinite_gradients={len(bad)} examples={bad}", flush=True)
+        return control
+
+
 def save_final(model: torch.nn.Module, output_dir: Path) -> None:
     model = unwrap_model(model)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -265,7 +293,11 @@ def main() -> None:
         seed=args.seed,
         data_seed=args.seed,
     )
-    callback = ScratchCheckpointCallback(args.checkpoint_steps, args.output_dir)
+    callbacks: list[TrainerCallback] = [
+        ScratchCheckpointCallback(args.checkpoint_steps, args.output_dir)
+    ]
+    if args.debug_gradients:
+        callbacks.append(GradientDebugCallback())
     if args.mode == "base":
         trainer: Trainer = Trainer(
             model=model,
@@ -273,7 +305,7 @@ def main() -> None:
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             data_collator=default_data_collator,
-            callbacks=[callback],
+            callbacks=callbacks,
         )
     else:
         assert isinstance(model, EngramModel)
@@ -283,7 +315,7 @@ def main() -> None:
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             data_collator=default_data_collator,
-            callbacks=[callback],
+            callbacks=callbacks,
             optimizer_kwargs={
                 "backbone_learning_rate": args.learning_rate,
                 "engram_dense_learning_rate": args.learning_rate,
