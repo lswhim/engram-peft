@@ -67,6 +67,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=32)
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument(
+        "--fp32",
+        action="store_true",
+        help="Disable BF16 autocast for numerical-stability diagnostics.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-steps", type=int, default=95)
     parser.add_argument("--checkpoint-steps", type=int, default=239)
@@ -231,7 +236,7 @@ def main() -> None:
         eval_steps=args.eval_steps,
         save_strategy="no",
         report_to="none",
-        bf16=True,
+        bf16=not args.fp32,
         tf32=True,
         gradient_checkpointing=True,
         dataloader_num_workers=args.num_workers,
