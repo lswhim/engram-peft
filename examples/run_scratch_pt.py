@@ -146,6 +146,12 @@ def make_model(args: argparse.Namespace, tokenizer: Any) -> torch.nn.Module:
         model_config,
         attn_implementation=getattr(args, "attn_implementation", "eager"),
     )
+    # Keep the random scratch decoder stable across its 24 residual blocks.
+    residual_scale = 1.0 / math.sqrt(2 * model_config.num_hidden_layers)
+    with torch.no_grad():
+        for layer in model.model.layers:
+            layer.self_attn.o_proj.weight.mul_(residual_scale)
+            layer.mlp.down_proj.weight.mul_(residual_scale)
     # Keep master weights in FP32; Trainer's BF16 autocast handles the matmuls.
     # Casting a randomly initialized billion-parameter model to BF16 before the
     # optimizer step can make the short warmup numerically unstable.
