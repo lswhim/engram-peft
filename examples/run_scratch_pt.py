@@ -78,6 +78,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
+        "--optimizer",
+        choices=("adamw_torch", "adamw_torch_fused"),
+        default="adamw_torch",
+        help="Explicitly select the HF Trainer AdamW backend.",
+    )
+    parser.add_argument(
         "--attn-implementation",
         choices=("eager", "sdpa", "flash_attention_2"),
         default="eager",
@@ -289,6 +295,7 @@ def main() -> None:
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         max_steps=max_steps,
         learning_rate=args.learning_rate,
+        optim=args.optimizer,
         lr_scheduler_type="cosine",
         warmup_ratio=0.03,
         weight_decay=0.1,
