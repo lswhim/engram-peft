@@ -119,6 +119,7 @@ def parse_args() -> argparse.Namespace:
 def make_scratch_config(tokenizer: Any) -> Qwen3Config:
     config = Qwen3Config(
         vocab_size=len(tokenizer),
+        initializer_range=0.01,
         hidden_size=1536,
         intermediate_size=4096,
         num_hidden_layers=24,
