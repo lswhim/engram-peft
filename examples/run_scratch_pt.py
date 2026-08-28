@@ -78,6 +78,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
+        "--attn-implementation",
+        choices=("eager", "sdpa", "flash_attention_2"),
+        default="eager",
+    )
+    parser.add_argument(
         "--fp32",
         action="store_true",
         help="Disable BF16 autocast for numerical-stability diagnostics.",
@@ -130,7 +135,10 @@ def make_model(args: argparse.Namespace, tokenizer: Any) -> torch.nn.Module:
     model = torch.nn.Module()  # replaced immediately; keeps type checkers quiet
     from transformers import AutoModelForCausalLM
 
-    model = AutoModelForCausalLM.from_config(model_config)
+    model = AutoModelForCausalLM.from_config(
+        model_config,
+        attn_implementation=getattr(args, "attn_implementation", "eager"),
+    )
     # Keep master weights in FP32; Trainer's BF16 autocast handles the matmuls.
     # Casting a randomly initialized billion-parameter model to BF16 before the
     # optimizer step can make the short warmup numerically unstable.
