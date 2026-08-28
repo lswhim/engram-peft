@@ -36,10 +36,20 @@ from engram_peft.utils.compat import wash_tokenizer
 
 
 class PackedTokenDataset(Dataset[dict[str, torch.Tensor]]):
-    def __init__(self, path: Path, sequence_length: int) -> None:
+    def __init__(
+        self,
+        path: Path,
+        sequence_length: int,
+        max_examples: int | None = None,
+    ) -> None:
         self.tokens = np.memmap(path, mode="r", dtype=np.uint32)
         self.sequence_length = sequence_length
-        self.example_count = (len(self.tokens) - 1) // sequence_length
+        available_examples = (len(self.tokens) - 1) // sequence_length
+        self.example_count = (
+            min(available_examples, max_examples)
+            if max_examples is not None
+            else available_examples
+        )
         if self.example_count <= 0:
             raise ValueError(f"not enough tokens in {path}")
 
@@ -142,7 +152,7 @@ def make_model(args: argparse.Namespace, tokenizer: Any) -> torch.nn.Module:
         memory_fusion="head_factorized" if args.mode == "semantic_rq" else "flatten",
         head_router_selection="semantic_keyed",
         use_sparse_embeddings=False,
-        engram_dtype="bfloat16",
+        engram_dtype="float32" if args.fp32 else "bfloat16",
         backbone_freeze_steps=0,
         entropy_loss_weight=0.0,
         clip_grad_per_group=True,
@@ -210,6 +220,10 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     train_dataset = PackedTokenDataset(args.data_dir / "train.bin", args.sequence_length)
     eval_dataset = PackedTokenDataset(args.data_dir / "eval.bin", args.sequence_length)
+    eval_batch_size = world_size * args.per_device_batch_size
+    eval_dataset.example_count -= eval_dataset.example_count % eval_batch_size
+    if eval_dataset.example_count <= 0:
+        raise ValueError("eval stream is too short for one complete distributed batch")
     model = make_model(args, tokenizer)
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
     print(

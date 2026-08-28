@@ -40,11 +40,13 @@ for mode in base arithmetic; do
     --output-dir "$mode_out" \
     --train-tokens 1000000000 \
     --sequence-length 2048 \
-    --per-device-batch-size 2 \
-    --gradient-accumulation-steps 32 \
+    --per-device-batch-size 1 \
+    --gradient-accumulation-steps 64 \
+    --learning-rate 1e-4 \
     --eval-steps 95 \
     --checkpoint-steps 239 \
     --num-workers 2 \
+    --fp32 \
     >> "$log" 2>&1
   echo "[scratch queue] finished mode=$mode" | tee -a "$log"
 done
