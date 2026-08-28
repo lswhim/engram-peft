@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-config", default="sample-10BT")
     parser.add_argument("--shuffle-buffer", type=int, default=100_000)
     parser.add_argument("--flush-tokens", type=int, default=1_000_000)
+    parser.add_argument("--tokenize-batch-size", type=int, default=64)
     return parser.parse_args()
 
 
@@ -87,17 +88,11 @@ def main() -> None:
         streaming=True,
     ).shuffle(seed=args.seed, buffer_size=args.shuffle_buffer)
 
-    try:
-        for example in stream:
-            text = str(example.get("text", ""))
-            if not text:
-                continue
-            ids = list(tokenizer(text, add_special_tokens=False)["input_ids"])
-            ids.append(int(eos_id))
-            if not ids:
-                continue
-            documents += 1
-
+    def consume_batch(texts: list[str]) -> bool:
+        nonlocal train_remaining, eval_remaining, train_documents, eval_documents
+        encoded = tokenizer(texts, add_special_tokens=False)["input_ids"]
+        for ids_raw in encoded:
+            ids = list(ids_raw) + [int(eos_id)]
             if train_remaining > 0:
                 take = min(train_remaining, len(ids))
                 train_writer.append(ids[:take])
@@ -113,7 +108,22 @@ def main() -> None:
                 eval_remaining -= take
                 if take == len(ids):
                     eval_documents += 1
+            if train_remaining == 0 and eval_remaining == 0:
+                return True
+        return False
 
+    pending: list[str] = []
+    try:
+        for example in stream:
+            text = str(example.get("text", ""))
+            if not text:
+                continue
+            pending.append(text)
+            documents += 1
+            if len(pending) < args.tokenize_batch_size:
+                continue
+            done = consume_batch(pending)
+            pending = []
             if documents % 1000 == 0:
                 print(
                     f"docs={documents:,} train={train_writer.count:,}/"
@@ -121,8 +131,10 @@ def main() -> None:
                     f"{args.eval_tokens:,}",
                     flush=True,
                 )
-            if train_remaining == 0 and eval_remaining == 0:
+            if done:
                 break
+        if pending and train_remaining > 0 or pending and eval_remaining > 0:
+            consume_batch(pending)
     finally:
         train_writer.close()
         eval_writer.close()
