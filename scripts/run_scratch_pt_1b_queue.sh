@@ -47,6 +47,8 @@ for mode in base arithmetic; do
     --checkpoint-steps 239 \
     --num-workers 2 \
     --fp32 \
+    --no-gradient-checkpointing \
+    --attn-implementation eager \
     >> "$log" 2>&1
   echo "[scratch queue] finished mode=$mode" | tee -a "$log"
 done
