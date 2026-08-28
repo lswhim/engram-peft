@@ -101,7 +101,9 @@ def make_model(args: argparse.Namespace, tokenizer: Any) -> torch.nn.Module:
     from transformers import AutoModelForCausalLM
 
     model = AutoModelForCausalLM.from_config(model_config)
-    model.to(dtype=torch.bfloat16)
+    # Keep master weights in FP32; Trainer's BF16 autocast handles the matmuls.
+    # Casting a randomly initialized billion-parameter model to BF16 before the
+    # optimizer step can make the short warmup numerically unstable.
     if args.mode == "base":
         return model
 
