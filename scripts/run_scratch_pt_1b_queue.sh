@@ -108,7 +108,8 @@ for mode in base arithmetic semantic_flatten semantic_keyed; do
           CUDA_VISIBLE_DEVICES="$gpu" "$PY" -u scripts/encode_rq_candidates.py \
             --table-dir "$TABLE" --candidate-dir "$UNIQUE" \
             --output-dir "$ENCODED/rank$gpu" --seed-db "$SEED" \
-            --gpu 0 --world-size 8 --embed-batch-size 1024 --chunk-size 16384 \
+            --gpu "$gpu" --device cuda:0 --world-size 8 \
+            --embed-batch-size 1024 --chunk-size 16384 \
             > "$ENCODED/rank$gpu.log" 2>&1 &
           encode_pids+=("$!")
         done

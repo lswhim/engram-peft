@@ -19,6 +19,7 @@ def main() -> None:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--seed-db", type=Path)
     p.add_argument("--gpu", type=int, required=True)
+    p.add_argument("--device", default="cuda:0")
     p.add_argument("--world-size", type=int, default=8)
     p.add_argument("--embed-batch-size", type=int, default=1024)
     p.add_argument("--chunk-size", type=int, default=16384)
@@ -37,7 +38,7 @@ def main() -> None:
     mapping = RQNgramMapping(
         table_dir=str(a.table_dir),
         cache_dir=str(a.output_dir),
-        embed_device=f"cuda:{a.gpu}",
+        embed_device=a.device,
         embed_batch_size=a.embed_batch_size,
     )
     for path in sorted(a.candidate_dir.glob("n*_p*.npz")):
