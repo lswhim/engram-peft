@@ -106,11 +106,6 @@ class RQNgramMapping:
             )
             self._cache.commit()
             self._runtime_codes = {n: {} for n in self.ngram_sizes}
-            for n, key, code in self._cache.execute("SELECT n, key, code FROM codes"):
-                if int(n) in self._runtime_codes:
-                    self._runtime_codes[int(n)][int(key)] = np.frombuffer(
-                        code, dtype=np.uint16
-                    ).astype(np.int64)
 
     # --- mirrors NgramHashMapping field used by MultiHeadEmbedding sizing ---
     @property
@@ -296,6 +291,30 @@ class RQNgramMapping:
         )
         return codes
 
+    def _load_cached_codes(self, n: int, keys: np.ndarray) -> dict[int, np.ndarray]:
+        """Read only the current batch's cache misses from the indexed SQLite table.
+
+        The full strict cache can contain hundreds of millions of rows.  Loading
+        it into ``_runtime_codes`` during model construction is both unnecessary
+        and makes every distributed rank block on a multi-GB CFS read.
+        """
+        if self._cache is None or len(keys) == 0:
+            return {}
+        result: dict[int, np.ndarray] = {}
+        unique_keys = np.unique(keys.astype(np.int64, copy=False))
+        for start in range(0, len(unique_keys), 900):
+            batch = [int(key) for key in unique_keys[start : start + 900]]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self._cache.execute(
+                f"SELECT key, code FROM codes WHERE n=? AND key IN ({placeholders})",
+                [int(n), *batch],
+            )
+            for key, code in rows:
+                result[int(key)] = np.frombuffer(
+                    code, dtype=np.uint16
+                ).astype(np.int64)
+        return result
+
     def _codes_for_ngram_size(
         self, cids: np.ndarray, original_ids: np.ndarray | None, n: int
     ) -> np.ndarray:
@@ -331,6 +350,15 @@ class RQNgramMapping:
                 for key in missing_keys
                 if int(key) in self._runtime_codes.get(n, {})
             }
+            cached.update(
+                self._load_cached_codes(
+                    n,
+                    np.asarray(
+                        [key for key in missing_keys if int(key) not in cached],
+                        dtype=np.int64,
+                    ),
+                )
+            )
             needs = [i for i, key in enumerate(missing_keys) if int(key) not in cached]
             if needs:
                 flat_keys = keys.reshape(-1)

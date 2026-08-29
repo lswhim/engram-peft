@@ -8,7 +8,7 @@ TOKENIZER=/tmp/Qwen3-1.7B-Base
 DATA=/tmp/engram_scratch_pt_1b_data_fast
 OUT=/anguszhang-cfs-nj/seokliu_workspace/engram/outputs/scratch_pt_1b/runs
 TABLE=/anguszhang-cfs-nj/seokliu_workspace/engram/rq_tables/fineweb_qwen3emb06b_M8K16_300k_strict
-RQ_CACHE=/anguszhang-cfs-nj/seokliu_workspace/engram/outputs/scratch_pt_1b/rq_cache_k16
+RQ_CACHE=/tmp/engram_scratch_pt_1b_rq_runtime_cache_k16
 RQ_WORK_CACHE=/tmp/engram_scratch_pt_1b_rq_shards_k16_v2
 
 cd "$ROOT"
