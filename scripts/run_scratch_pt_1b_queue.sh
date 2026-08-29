@@ -123,9 +123,12 @@ for mode in base arithmetic semantic_flatten semantic_keyed; do
         for f in "$ENCODED"/rank*/semantic_codes.sqlite3; do
           [[ -s "$f" ]] && encoded_inputs+=("$f")
         done
+        FINAL_CACHE="$RQ_WORK_CACHE/final.sqlite3"
+        rm -f "$FINAL_CACHE"
         "$PY" -u scripts/merge_rq_cache.py \
-          --output "$RQ_CACHE/semantic_codes.sqlite3" "${encoded_inputs[@]}" \
+          --output "$FINAL_CACHE" "${encoded_inputs[@]}" \
           >> "$OUT/rq_preencode.log" 2>&1
+        cp "$FINAL_CACHE" "$RQ_CACHE/semantic_codes.sqlite3"
         printf '{"status":"complete","stream":"both","sequence_length":2048}\n' \
           > "$RQ_CACHE/preencode_complete.json"
         printf 'complete\n' > "$ENCODED/encode_complete"
