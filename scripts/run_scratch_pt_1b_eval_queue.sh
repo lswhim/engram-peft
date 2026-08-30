@@ -21,7 +21,7 @@ export MKL_NUM_THREADS=2
 export TOKENIZERS_PARALLELISM=false
 
 STANDARD_TASKS="wikitext,c4,lambada_openai"
-FINEWEB_TASKS="commonsense_qa,hellaswag,openbookqa,piqa,social_iqa,winogrande,arc,mmlu"
+FINEWEB_TASKS="commonsense_qa,hellaswag,openbookqa,piqa,social_iqa,winogrande,arc_challenge,mmlu"
 SUITE_ONLY=${SUITE_ONLY:-all}
 METHODS_ONLY=${METHODS_ONLY:-all}
 BATCH_SIZE=${BATCH_SIZE:-auto}
