@@ -21,7 +21,8 @@ export MKL_NUM_THREADS=2
 export TOKENIZERS_PARALLELISM=false
 
 STANDARD_TASKS="wikitext,c4,lambada_openai"
-FINEWEB_TASKS="commonsense_qa,hellaswag,openbookqa,piqa,siqa,winogrande,arc,mmlu"
+FINEWEB_TASKS="commonsense_qa,hellaswag,openbookqa,piqa,social_iqa,winogrande,arc,mmlu"
+SUITE_ONLY=${SUITE_ONLY:-all}
 
 # The evaluator rejects a dummy --engram-weights path for base, so use two
 # small wrappers to keep the eight jobs explicit and independently resumable.
@@ -52,14 +53,18 @@ run_engram() {
     --output "$output" > "$LOG/${method}_${suite}.log" 2>&1
 }
 
-run_base 0 standard "$STANDARD_TASKS" &
-run_engram 1 arithmetic standard "$STANDARD_TASKS" &
-run_engram 2 semantic_flatten standard "$STANDARD_TASKS" &
-run_engram 3 semantic_keyed standard "$STANDARD_TASKS" &
-run_base 4 fineweb "$FINEWEB_TASKS" &
-run_engram 5 arithmetic fineweb "$FINEWEB_TASKS" &
-run_engram 6 semantic_flatten fineweb "$FINEWEB_TASKS" &
-run_engram 7 semantic_keyed fineweb "$FINEWEB_TASKS" &
+if [[ "$SUITE_ONLY" == all || "$SUITE_ONLY" == standard ]]; then
+  run_base 0 standard "$STANDARD_TASKS" &
+  run_engram 1 arithmetic standard "$STANDARD_TASKS" &
+  run_engram 2 semantic_flatten standard "$STANDARD_TASKS" &
+  run_engram 3 semantic_keyed standard "$STANDARD_TASKS" &
+fi
+if [[ "$SUITE_ONLY" == all || "$SUITE_ONLY" == fineweb ]]; then
+  run_base 4 fineweb "$FINEWEB_TASKS" &
+  run_engram 5 arithmetic fineweb "$FINEWEB_TASKS" &
+  run_engram 6 semantic_flatten fineweb "$FINEWEB_TASKS" &
+  run_engram 7 semantic_keyed fineweb "$FINEWEB_TASKS" &
+fi
 wait
 
 echo "SCRATCH_PT_1B_EVAL_QUEUE_DONE"
