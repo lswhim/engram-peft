@@ -88,6 +88,7 @@ def numeric_results(results: dict[str, Any]) -> dict[str, dict[str, int | float]
 
 def patch_datasets_feature_alias() -> None:
     """Read cached dataset metadata written by newer datasets releases."""
+    os.environ.setdefault("HF_DATASETS_TRUST_REMOTE_CODE", "1")
     try:
         from datasets.features.features import _FEATURE_TYPES, Sequence
     except ImportError:
