@@ -26,7 +26,10 @@ FINEWEB_TASKS="commonsense_qa,hellaswag,openbookqa,piqa,siqa,winogrande,arc,mmlu
 # The evaluator rejects a dummy --engram-weights path for base, so use two
 # small wrappers to keep the eight jobs explicit and independently resumable.
 run_base() {
-  local gpu=$1 suite=$2 tasks=$3 output="$OUT/base_${suite}.json"
+  local gpu=$1
+  local suite=$2
+  local tasks=$3
+  local output="$OUT/base_${suite}.json"
   [[ -s "$output" ]] && return
   CUDA_VISIBLE_DEVICES="$gpu" "$PY" -u examples/evaluate_standard_lm.py \
     --model "$RUNS/base/final" --tokenizer "$TOKENIZER" \
@@ -35,7 +38,11 @@ run_base() {
 }
 
 run_engram() {
-  local gpu=$1 method=$2 suite=$3 tasks=$4 output="$OUT/${method}_${suite}.json"
+  local gpu=$1
+  local method=$2
+  local suite=$3
+  local tasks=$4
+  local output="$OUT/${method}_${suite}.json"
   [[ -s "$output" ]] && return
   CUDA_VISIBLE_DEVICES="$gpu" "$PY" -u examples/evaluate_standard_lm.py \
     --model "$RUNS/$method/final/base_model" \
