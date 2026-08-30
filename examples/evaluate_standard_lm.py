@@ -59,6 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--batch-size", default="auto")
     parser.add_argument(
+        "--max-length",
+        type=int,
+        default=2048,
+        help="Evaluation context length in tokens; matches the 1B scratch-PT setup.",
+    )
+    parser.add_argument(
         "--limit",
         type=float,
         help="Optional harness limit for debugging only; omit in paper runs.",
@@ -158,7 +164,12 @@ def main() -> None:
         print(f"[standard-lm] loaded {args.engram_weights}", flush=True)
 
     tasks = normalize_tasks(args.tasks)
-    harness = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.batch_size)
+    harness = HFLM(
+        pretrained=model,
+        tokenizer=tokenizer,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+    )
     raw = simple_evaluate(
         model=harness,
         tasks=tasks,
