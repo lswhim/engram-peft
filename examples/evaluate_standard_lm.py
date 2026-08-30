@@ -22,6 +22,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
     parser.add_argument(
+        "--tokenizer",
+        help="Tokenizer path. Defaults to --model; useful for scratch checkpoints.",
+    )
+    parser.add_argument(
         "--tasks",
         default="wikitext,c4,lambada_openai",
         help="Comma-separated public lm-evaluation-harness task names.",
@@ -95,7 +99,9 @@ def main() -> None:
     if args.result_suffix:
         args.engram_weights = completed_checkpoint(args.result_suffix)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.tokenizer or args.model, trust_remote_code=True
+    )
     base = AutoModelForCausalLM.from_pretrained(
         args.model,
         dtype=torch.bfloat16,
