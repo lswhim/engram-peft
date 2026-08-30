@@ -86,10 +86,20 @@ def numeric_results(results: dict[str, Any]) -> dict[str, dict[str, int | float]
     return selected
 
 
+def patch_datasets_feature_alias() -> None:
+    """Read cached dataset metadata written by newer datasets releases."""
+    try:
+        from datasets.features.features import _FEATURE_TYPES, Sequence
+    except ImportError:
+        return
+    _FEATURE_TYPES.setdefault("List", Sequence)
+
+
 def main() -> None:
     args = parse_args()
 
     import torch
+    patch_datasets_feature_alias()
     from lm_eval import simple_evaluate
     from lm_eval.models.huggingface import HFLM
     from transformers import AutoModelForCausalLM, AutoTokenizer
