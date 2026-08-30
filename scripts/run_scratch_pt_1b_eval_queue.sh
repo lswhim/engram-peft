@@ -24,6 +24,7 @@ STANDARD_TASKS="wikitext,c4,lambada_openai"
 FINEWEB_TASKS="commonsense_qa,hellaswag,openbookqa,piqa,social_iqa,winogrande,arc,mmlu"
 SUITE_ONLY=${SUITE_ONLY:-all}
 METHODS_ONLY=${METHODS_ONLY:-all}
+BATCH_SIZE=${BATCH_SIZE:-auto}
 
 method_enabled() {
   [[ "$METHODS_ONLY" == all || ",$METHODS_ONLY," == *,"$1",* ]]
@@ -39,7 +40,7 @@ run_base() {
   [[ -s "$output" ]] && return
   CUDA_VISIBLE_DEVICES="$gpu" "$PY" -u examples/evaluate_standard_lm.py \
     --model "$RUNS/base/final" --tokenizer "$TOKENIZER" \
-    --method base --seed 42 --tasks "$tasks" --batch-size auto \
+    --method base --seed 42 --tasks "$tasks" --batch-size "$BATCH_SIZE" \
     --output "$output" > "$LOG/base_${suite}.log" 2>&1
 }
 
@@ -54,7 +55,7 @@ run_engram() {
     --model "$RUNS/$method/final/base_model" \
     --tokenizer "$TOKENIZER" \
     --engram-weights "$RUNS/$method/final/engram" \
-    --method "$method" --seed 42 --tasks "$tasks" --batch-size auto \
+    --method "$method" --seed 42 --tasks "$tasks" --batch-size "$BATCH_SIZE" \
     --output "$output" > "$LOG/${method}_${suite}.log" 2>&1
 }
 
