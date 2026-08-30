@@ -63,6 +63,7 @@ class RQNgramMapping:
     _projectors: dict[int, Any] = field(init=False, default_factory=dict, repr=False)
     _meta: dict[str, Any] = field(init=False, repr=False)
     _trace_enabled: bool = field(init=False, default=False, repr=False)
+    _cache_read_only: bool = field(init=False, default=False, repr=False)
     _traced_rows: set[tuple[int, int, int]] = field(
         init=False, default_factory=set, repr=False
     )
@@ -92,19 +93,30 @@ class RQNgramMapping:
         self.max_ngram_size = max(self.ngram_sizes)
         if self.cache_dir is not None:
             cache_path = Path(self.cache_dir)
-            cache_path.mkdir(parents=True, exist_ok=True)
-            self._cache = sqlite3.connect(cache_path / "semantic_codes.sqlite3")
+            self._cache_read_only = os.environ.get("ENGRAM_RQ_CACHE_READ_ONLY") == "1"
+            cache_file = cache_path / "semantic_codes.sqlite3"
+            if self._cache_read_only:
+                if not cache_file.is_file():
+                    raise FileNotFoundError(f"RQ cache is missing: {cache_file}")
+                self._cache = sqlite3.connect(
+                    f"file:{cache_file}?mode=ro", uri=True
+                )
+                self._cache.execute("PRAGMA query_only = ON")
+            else:
+                cache_path.mkdir(parents=True, exist_ok=True)
+                self._cache = sqlite3.connect(cache_file)
             # Concurrent processes used to share one cache file and die with
             # "database is locked". Each method now gets its own cache_dir, but
             # keep a timeout so a transient writer collision retries instead of
             # aborting a multi-hour run.
             self._cache.execute("PRAGMA busy_timeout = 30000")
-            self._cache.execute(
-                "CREATE TABLE IF NOT EXISTS codes "
-                "(n INTEGER NOT NULL, key INTEGER NOT NULL, code BLOB NOT NULL, "
-                "PRIMARY KEY (n, key))"
-            )
-            self._cache.commit()
+            if not self._cache_read_only:
+                self._cache.execute(
+                    "CREATE TABLE IF NOT EXISTS codes "
+                    "(n INTEGER NOT NULL, key INTEGER NOT NULL, code BLOB NOT NULL, "
+                    "PRIMARY KEY (n, key))"
+                )
+                self._cache.commit()
             self._runtime_codes = {n: {} for n in self.ngram_sizes}
 
     # --- mirrors NgramHashMapping field used by MultiHeadEmbedding sizing ---
@@ -278,14 +290,15 @@ class RQNgramMapping:
             faiss.unpack_bitstrings(packed, self.num_levels, nbits), dtype=np.int64
         )
         codes = self._shuffle_codes(n, codes, oov=True)
-        self._cache.executemany(
-            "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
-            [
-                (n, int(key), sqlite3.Binary(code.astype(np.uint16).tobytes()))
-                for key, code in zip(keys, codes, strict=True)
-            ],
-        )
-        self._cache.commit()
+        if not self._cache_read_only:
+            self._cache.executemany(
+                "INSERT OR IGNORE INTO codes(n, key, code) VALUES (?, ?, ?)",
+                [
+                    (n, int(key), sqlite3.Binary(code.astype(np.uint16).tobytes()))
+                    for key, code in zip(keys, codes, strict=True)
+                ],
+            )
+            self._cache.commit()
         self._runtime_codes[n].update(
             {int(key): code.copy() for key, code in zip(keys, codes, strict=True)}
         )
