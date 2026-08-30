@@ -18,6 +18,29 @@ from pathlib import Path
 from typing import Any
 
 
+MMLU_SUBJECTS = (
+    "abstract_algebra", "anatomy", "astronomy", "business_ethics",
+    "clinical_knowledge", "college_biology", "college_chemistry",
+    "college_computer_science", "college_mathematics", "college_medicine",
+    "college_physics", "computer_security", "conceptual_physics",
+    "econometrics", "electrical_engineering", "elementary_mathematics",
+    "formal_logic", "global_facts", "high_school_biology",
+    "high_school_chemistry", "high_school_computer_science",
+    "high_school_european_history", "high_school_geography",
+    "high_school_government_and_politics", "high_school_macroeconomics",
+    "high_school_mathematics", "high_school_microeconomics",
+    "high_school_physics", "high_school_psychology", "high_school_statistics",
+    "high_school_us_history", "high_school_world_history", "human_aging",
+    "human_sexuality", "international_law", "jurisprudence",
+    "logical_fallacies", "machine_learning", "management", "marketing",
+    "medical_genetics", "miscellaneous", "moral_disputes", "moral_scenarios",
+    "nutrition", "philosophy", "prehistory", "professional_accounting",
+    "professional_law", "professional_medicine", "professional_psychology",
+    "public_relations", "security_studies", "sociology", "us_foreign_policy",
+    "virology", "world_religions",
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -96,6 +119,12 @@ def patch_datasets_feature_alias() -> None:
     _FEATURE_TYPES.setdefault("List", Sequence)
 
 
+def normalize_tasks(raw_tasks: str) -> list[str]:
+    tasks = [value.strip() for value in raw_tasks.split(",") if value.strip()]
+    expanded = [f"mmlu_{subject}" for subject in MMLU_SUBJECTS]
+    return [task for value in tasks for task in (expanded if value == "mmlu" else [value])]
+
+
 def main() -> None:
     args = parse_args()
 
@@ -128,7 +157,7 @@ def main() -> None:
         ).cuda().eval()
         print(f"[standard-lm] loaded {args.engram_weights}", flush=True)
 
-    tasks = [value.strip() for value in args.tasks.split(",") if value.strip()]
+    tasks = normalize_tasks(args.tasks)
     harness = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.batch_size)
     raw = simple_evaluate(
         model=harness,
