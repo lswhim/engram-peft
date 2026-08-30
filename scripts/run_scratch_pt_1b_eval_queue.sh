@@ -13,6 +13,9 @@ mkdir -p "$OUT" "$LOG"
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src:$ROOT"
 export HF_HUB_DISABLE_XET=1
+export https_proxy=http://star-proxy.oa.com:3128
+export http_proxy=http://star-proxy.oa.com:3128
+export no_proxy=".woa.com,.oa.com,.tencentcos.cn,localhost,127.0.0.1"
 export OMP_NUM_THREADS=2
 export MKL_NUM_THREADS=2
 export TOKENIZERS_PARALLELISM=false
