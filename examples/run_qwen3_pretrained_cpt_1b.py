@@ -34,6 +34,7 @@ def make_pretrained_model(args, tokenizer):
         dtype=dtype,
         attn_implementation=getattr(args, "attn_implementation", "eager"),
     )
+    model.config.use_cache = False
     if args.mode == "base":
         return model
 
