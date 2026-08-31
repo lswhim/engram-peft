@@ -54,7 +54,7 @@ for mode in base arithmetic semantic_flatten semantic_keyed; do
     --sequence-length 2048 \
     --per-device-batch-size 1 \
     --gradient-accumulation-steps 64 \
-    --learning-rate 3e-4 \
+    --learning-rate 3e-5 \
     --eval-steps 95 \
     --checkpoint-steps 239 \
     --num-workers 2 \

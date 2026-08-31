@@ -21,6 +21,7 @@ from engram_peft.utils.compat import wash_tokenizer
 
 def make_qwen3_scratch_model(args, tokenizer):
     config = AutoConfig.from_pretrained(args.tokenizer)
+    config.initializer_range = 0.01
     config.use_cache = False
     config.pad_token_id = tokenizer.pad_token_id
     config.bos_token_id = tokenizer.bos_token_id
