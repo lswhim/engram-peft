@@ -9,6 +9,7 @@ pretrained parameter is loaded; all model weights are initialized by
 from __future__ import annotations
 
 import os
+import math
 
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -28,6 +29,14 @@ def make_qwen3_scratch_model(args, tokenizer):
         config,
         attn_implementation=getattr(args, "attn_implementation", "eager"),
     )
+    # Scale residual branches for a deep randomly initialized decoder.  This is
+    # the same variance-preserving initialization used by the validated scratch
+    # runner; without it the first BF16 loss overflows before warmup can help.
+    residual_scale = 1.0 / math.sqrt(2 * config.num_hidden_layers)
+    with torch.no_grad():
+        for layer in model.model.layers:
+            layer.self_attn.o_proj.weight.mul_(residual_scale)
+            layer.mlp.down_proj.weight.mul_(residual_scale)
     if args.mode == "base":
         return model
 
