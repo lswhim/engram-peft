@@ -65,7 +65,11 @@ class PackedTokenDataset(Dataset[dict[str, torch.Tensor]]):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("base", "arithmetic", "semantic_rq"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("base", "arithmetic", "semantic_flatten", "semantic_keyed"),
+        required=True,
+    )
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -158,16 +162,19 @@ def make_model(args: argparse.Namespace, tokenizer: Any) -> torch.nn.Module:
     if args.mode == "base":
         return model
 
-    if args.mode == "semantic_rq":
+    semantic_mode = args.mode in {"semantic_flatten", "semantic_keyed"}
+    if semantic_mode:
         if args.rq_table_dir is None or args.rq_cache_dir is None:
-            raise ValueError("semantic_rq requires --rq-table-dir and --rq-cache-dir")
+            raise ValueError(
+                f"{args.mode} requires --rq-table-dir and --rq-cache-dir"
+            )
         hash_backend = "rq"
     else:
         hash_backend = "arithmetic_fixed"
 
     rank = int(os.environ.get("RANK", "0"))
     cache_dir = None
-    if args.mode == "semantic_rq":
+    if semantic_mode:
         # Each DDP rank owns its SQLite writer; sharing one live SQLite cache is
         # a reliable source of lock failures during first-seen n-gram encoding.
         cache_dir = args.rq_cache_dir / f"rank{rank}"
@@ -185,7 +192,9 @@ def make_model(args: argparse.Namespace, tokenizer: Any) -> torch.nn.Module:
         hash_backend=hash_backend,
         rq_table_dir=str(args.rq_table_dir) if args.rq_table_dir else None,
         rq_cache_dir=str(cache_dir) if cache_dir else None,
-        memory_fusion="head_factorized" if args.mode == "semantic_rq" else "flatten",
+        memory_fusion=(
+            "head_factorized" if args.mode == "semantic_keyed" else "flatten"
+        ),
         head_router_selection="semantic_keyed",
         use_sparse_embeddings=False,
         engram_dtype="float32" if args.fp32 else "bfloat16",
@@ -313,7 +322,7 @@ def main() -> None:
         save_strategy="no",
         report_to="none",
         bf16=not args.fp32,
-        tf32=True,
+        tf32=not args.fp32,
         gradient_checkpointing=not args.no_gradient_checkpointing,
         dataloader_num_workers=args.num_workers,
         dataloader_pin_memory=True,
