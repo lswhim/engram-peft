@@ -273,8 +273,12 @@ class RQNgramMapping:
                 lengths = batch["attention_mask"].sum(dim=1) - 1
                 vectors = hidden[torch.arange(hidden.size(0), device=hidden.device), lengths]
                 vectors = torch.nn.functional.normalize(vectors, dim=-1)
-                encoded.append(vectors.float().cpu().numpy())
-        vectors_np = np.ascontiguousarray(np.concatenate(encoded).astype(np.float32))
+                # Keep the transfer in the model dtype; one CPU-side cast is
+                # equivalent to the previous per-batch GPU-side cast.
+                encoded.append(vectors.cpu().numpy())
+        vectors_np = np.ascontiguousarray(
+            np.concatenate(encoded).astype(np.float32, copy=False)
+        )
         if n in self._projectors:
             with torch.inference_mode():
                 projected = self._projectors[n](
