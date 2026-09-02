@@ -376,8 +376,24 @@ class RQNgramMapping:
             if needs:
                 flat_keys = keys.reshape(-1)
                 flat_original = original_windows.reshape(-1, n)
-                first_positions = {int(key): int(np.flatnonzero(flat_keys == key)[0]) for key in missing_keys[needs]}
-                new_windows = np.stack([flat_original[first_positions[int(missing_keys[i])]] for i in needs])
+                missing_mask = ~hit.reshape(-1)
+                missing_positions = np.flatnonzero(missing_mask)
+                _, first_indices = np.unique(
+                    flat_keys[missing_mask], return_index=True
+                )
+                first_positions = missing_positions[first_indices]
+                missing_key_positions = {
+                    int(key): int(position)
+                    for key, position in zip(
+                        missing_keys, first_positions, strict=True
+                    )
+                }
+                new_windows = np.stack(
+                    [
+                        flat_original[missing_key_positions[int(missing_keys[i])]]
+                        for i in needs
+                    ]
+                )
                 new_codes = self._encode_missing(n, missing_keys[needs], new_windows)
                 self._runtime_codes.setdefault(n, {}).update(
                     {
